@@ -339,28 +339,30 @@ function SidePanel() {
             <p className="text-xs text-[#787774]">阅读助手</p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {conversationStarted && (
             <button
               onClick={handleSummarize}
               disabled={isLoading}
-              className="p-2 text-[#787774] hover:text-[#37352f] hover:bg-[#f7f6f3] rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f7f6f3] text-[#37352f] rounded-lg hover:bg-[#2eaadc] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
               title="总结对话"
             >
-              <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
               </svg>
+              <span className="hidden sm:inline">总结</span>
             </button>
           )}
           {conversationStarted && (
             <button
               onClick={clearConversation}
-              className="p-2 text-[#787774] hover:text-[#37352f] hover:bg-[#f7f6f3] rounded-md transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f7f6f3] text-[#37352f] rounded-lg hover:bg-[#ef4444] hover:text-white transition-all text-sm font-medium"
               title="新对话"
             >
-              <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
+              <span className="hidden sm:inline">新对话</span>
             </button>
           )}
         </div>
@@ -530,13 +532,13 @@ function SidePanel() {
             <button
               onClick={handleSend}
               disabled={!input.trim() || isLoading}
-              className={`p-3 rounded-2xl transition-all shadow-sm flex-shrink-0 ${
+              className={`p-3 rounded-2xl transition-all shadow-sm flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center ${
                 input.trim() && !isLoading
                   ? "bg-gradient-to-r from-[#2eaadc] to-[#1c96c5] text-white hover:from-[#1c96c5] hover:to-[#1580a8] shadow-md"
                   : "bg-[#f7f6f3] text-[#a9a8a5] cursor-not-allowed"
               }`}
             >
-              <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
               </svg>
             </button>
