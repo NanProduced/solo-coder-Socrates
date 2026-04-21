@@ -23,8 +23,11 @@ function IndexPopup() {
     }
   }, [config])
 
-  const openSidePanel = () => {
-    chrome.sidePanel.open({ tabId: chrome.tabs.TAB_ID_NONE })
+  const openSidePanel = async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab.id) {
+      await chrome.sidePanel.open({ tabId: tab.id })
+    }
   }
 
   const openOptions = () => {
