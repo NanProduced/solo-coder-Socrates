@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
 import "./style.css"
 
@@ -7,6 +7,7 @@ interface Message {
   role: "user" | "assistant" | "system"
   content: string
   timestamp: number
+  visible: boolean
 }
 
 interface OpenAIConfig {
@@ -51,6 +52,71 @@ const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和
 - "我注意到你正在阅读一篇关于[主题]的文章。你觉得这篇文章试图告诉我们什么？"
 - "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
 - "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
+
+const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
+  const renderedHTML = useMemo(() => {
+    let html = content
+    
+    const codeBlocks: string[] = []
+    html = html.replace(/```(\w+)?\s*\n([\s\S]*?)\n```/g, (match, lang, code) => {
+      codeBlocks.push(code)
+      return `__CODE_BLOCK_${codeBlocks.length - 1}__`
+    })
+    
+    const inlineCodes: string[] = []
+    html = html.replace(/`([^`]+)`/g, (match, code) => {
+      inlineCodes.push(code)
+      return `__INLINE_CODE_${inlineCodes.length - 1}__`
+    })
+    
+    html = html.replace(/^#\s+(.+)$/gm, '<h1 class="text-lg font-bold mb-3 mt-4">$1</h1>')
+    html = html.replace(/^##\s+(.+)$/gm, '<h2 class="text-base font-bold mb-2 mt-3">$1</h2>')
+    html = html.replace(/^###\s+(.+)$/gm, '<h3 class="text-sm font-bold mb-2 mt-2">$1</h3>')
+    
+    html = html.replace(/^[-*+]\s+(.+)$/gm, '<li class="text-sm">$1</li>')
+    html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul class="list-disc pl-4 mb-2 space-y-1">$&</ul>')
+    
+    html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="text-sm">$1</li>')
+    html = html.replace(/(<li.*<\/li>\n?)+/g, (match) => {
+      if (match.includes('class="list-disc')) return match
+      return `<ol class="list-decimal pl-4 mb-2 space-y-1">${match}</ol>`
+    })
+    
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="font-bold">$1</strong>')
+    html = html.replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
+    
+    html = html.replace(/^>\s+(.+)$/gm, (match, text) => {
+      return `<blockquote class="border-l-4 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
+    })
+    
+    html = html.replace(/\n\n/g, '</p><p class="mb-2 last:mb-0">')
+    html = html.replace(/\n/g, '<br/>')
+    
+    if (html && !html.startsWith('<')) {
+      html = '<p class="mb-2 last:mb-0">' + html + '</p>'
+    }
+    
+    html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
+      const code = inlineCodes[parseInt(index)]
+      const bgClass = isUser ? 'bg-white/20' : 'bg-gray-100 text-gray-800'
+      return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
+    })
+    
+    html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
+      const code = codeBlocks[parseInt(index)]
+      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-gray-50 text-gray-800 text-xs font-mono overflow-x-auto">${code}</code></pre>`
+    })
+    
+    return html
+  }, [content, isUser])
+
+  return (
+    <div 
+      className="text-sm leading-relaxed"
+      dangerouslySetInnerHTML={{ __html: renderedHTML }}
+    />
+  )
+}
 
 function SidePanel() {
   const [config] = useStorage<OpenAIConfig>("openai-config", {
@@ -213,14 +279,16 @@ function SidePanel() {
         id: generateId(),
         role: "system",
         content: SOCRATES_SYSTEM_PROMPT + "\n\n" + contextPrompt,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        visible: false
       }
 
       const firstUserMessage: Message = {
         id: generateId(),
         role: "user",
         content: "我想开始阅读这篇文档，请引导我理解它。",
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        visible: false
       }
 
       const aiResponse = await callOpenAI([initialMessage, firstUserMessage])
@@ -229,10 +297,11 @@ function SidePanel() {
         id: generateId(),
         role: "assistant",
         content: aiResponse,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        visible: true
       }
 
-      setMessages([initialMessage, assistantMessage])
+      setMessages([initialMessage, firstUserMessage, assistantMessage])
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -247,7 +316,8 @@ function SidePanel() {
       id: generateId(),
       role: "user",
       content: input.trim(),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      visible: true
     }
 
     const newMessages = [...messages, userMessage]
@@ -262,7 +332,8 @@ function SidePanel() {
         id: generateId(),
         role: "assistant",
         content: response,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        visible: true
       }
       setMessages([...newMessages, assistantMessage])
     } catch (error) {
@@ -275,27 +346,37 @@ function SidePanel() {
   const handleSummarize = async () => {
     if (isLoading || messages.length === 0) return
 
-    const summarizePrompt: Message = {
+    const userActionMessage: Message = {
+      id: generateId(),
+      role: "user",
+      content: "帮我总结",
+      timestamp: Date.now(),
+      visible: true
+    }
+
+    const internalInstruction: Message = {
       id: generateId(),
       role: "user",
       content: "用户现在希望总结我们的对话和文档的核心内容。请提供一个简洁、清晰的总结，包括：1) 文档的核心主题，2) 我们讨论过的关键点，3) 主要的理解收获。",
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      visible: false
     }
 
-    const newMessages = [...messages, summarizePrompt]
-    setMessages(newMessages)
+    setMessages([...messages, userActionMessage])
     setIsLoading(true)
     setErrorMessage(null)
 
     try {
-      const response = await callOpenAI(newMessages)
+      const messagesForAI = [...messages, internalInstruction]
+      const response = await callOpenAI(messagesForAI)
       const assistantMessage: Message = {
         id: generateId(),
         role: "assistant",
         content: response,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        visible: true
       }
-      setMessages([...newMessages, assistantMessage])
+      setMessages([...messages, userActionMessage, assistantMessage])
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -316,14 +397,7 @@ function SidePanel() {
     setErrorMessage(null)
   }
 
-  const displayMessages = messages.filter(m => m.role !== "system")
-
-  const formatMessage = (content: string) => {
-    return content
-      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n\n/g, '</p><p class="mt-2">')
-      .replace(/\n/g, '<br/>')
-  }
+  const displayMessages = messages.filter(m => m.visible)
 
   return (
     <div className="flex flex-col h-full bg-[#fcfcfc]">
@@ -453,10 +527,7 @@ function SidePanel() {
                             : "bg-white text-[#37352f] rounded-t-2xl rounded-br-2xl shadow-sm border border-[#eaeaea]"
                         }`}
                       >
-                        <div 
-                          className="text-sm leading-relaxed"
-                          dangerouslySetInnerHTML={{ __html: formatMessage(message.content) }}
-                        />
+                        <MarkdownMessage content={message.content} isUser={message.role === "user"} />
                       </div>
                       {message.role === "user" && (
                         <div className="w-7 h-7 bg-[#37352f] rounded-full flex-shrink-0 flex items-center justify-center shadow-sm">
