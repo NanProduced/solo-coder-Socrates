@@ -265,48 +265,565 @@ function SidePanel() {
   const generateId = () =>
     Date.now().toString() + Math.random().toString(36).slice(2, 11)
 
+  // 智能文本截断配置
+  const TRUNCATION_CONFIG = {
+    maxContextTokens: 128000,
+    reservedTokens: 2000,
+    titleTokenWeight: 2,
+    charToTokenRatio: 0.5,
+    minParagraphs: 3,
+    maxSummaryTokens: 500,
+  }
+
+  // 估算文本的 token 数量
+  const estimateTokens = (text: string): number => {
+    return Math.ceil(text.length * 0.8)
+  }
+
+  // 段落信息接口
+  interface ParagraphInfo {
+    text: string
+    length: number
+    tokenEstimate: number
+    isHeading: boolean
+    position: number
+  }
+
+  // 从文本中提取段落信息
+  const extractParagraphs = (text: string): ParagraphInfo[] => {
+    const lines = text.split(/\n\n+/)
+    const paragraphs: ParagraphInfo[] = []
+
+    lines.forEach((line, index) => {
+      const trimmed = line.trim()
+      if (trimmed.length === 0) return
+
+      const isHeading = 
+        trimmed.length < 100 && 
+        (trimmed === trimmed.toUpperCase() || 
+         /^\d+[\.\)]/.test(trimmed) ||
+         /^[一二三四五六七八九十]+[、\.]/.test(trimmed))
+
+      paragraphs.push({
+        text: trimmed,
+        length: trimmed.length,
+        tokenEstimate: estimateTokens(trimmed),
+        isHeading,
+        position: index / lines.length,
+      })
+    })
+
+    return paragraphs
+  }
+
+  // 智能截断文本
+  const smartTruncate = (
+    title: string,
+    content: string,
+    maxTokens: number = TRUNCATION_CONFIG.maxContextTokens - TRUNCATION_CONFIG.reservedTokens
+  ) => {
+    const totalTokens = estimateTokens(title) + estimateTokens(content)
+
+    if (totalTokens <= maxTokens) {
+      return {
+        truncatedContent: content,
+        isTruncated: false,
+        totalLength: content.length,
+        truncatedLength: content.length,
+      }
+    }
+
+    const paragraphs = extractParagraphs(content)
+    const titleTokens = estimateTokens(title) * TRUNCATION_CONFIG.titleTokenWeight
+    const remainingTokens = maxTokens - titleTokens
+
+    if (remainingTokens <= 0) {
+      return {
+        truncatedContent: "",
+        isTruncated: true,
+        totalLength: content.length,
+        truncatedLength: 0,
+        summary: "内容过长，已被完全截断",
+      }
+    }
+
+    const selectedParagraphs = []
+    let usedTokens = 0
+
+    // 1. 添加所有标题
+    const headings = paragraphs.filter(p => p.isHeading)
+    for (const heading of headings) {
+      if (usedTokens + heading.tokenEstimate <= remainingTokens) {
+        selectedParagraphs.push(heading)
+        usedTokens += heading.tokenEstimate
+      }
+    }
+
+    // 2. 添加开头段落（介绍部分）
+    const introParagraphs = paragraphs.filter(p => !p.isHeading && p.position < 0.2)
+    for (const para of introParagraphs.slice(0, 5)) {
+      if (usedTokens + para.tokenEstimate <= remainingTokens) {
+        selectedParagraphs.push(para)
+        usedTokens += para.tokenEstimate
+      }
+    }
+
+    // 3. 添加结尾段落（结论部分）
+    const conclusionParagraphs = paragraphs.filter(p => !p.isHeading && p.position > 0.8)
+    for (const para of conclusionParagraphs.slice(-3)) {
+      if (usedTokens + para.tokenEstimate <= remainingTokens) {
+        selectedParagraphs.push(para)
+        usedTokens += para.tokenEstimate
+      }
+    }
+
+    // 4. 从中间部分选择性添加较长的段落
+    const middleParagraphs = paragraphs.filter(p => !p.isHeading && p.position >= 0.2 && p.position <= 0.8)
+    const sortedMiddle = [...middleParagraphs].sort((a, b) => b.length - a.length)
+
+    for (const para of sortedMiddle) {
+      if (usedTokens + para.tokenEstimate <= remainingTokens) {
+        selectedParagraphs.push(para)
+        usedTokens += para.tokenEstimate
+      }
+    }
+
+    // 按原始顺序排序
+    selectedParagraphs.sort((a, b) => paragraphs.indexOf(a) - paragraphs.indexOf(b))
+
+    const truncatedContent = selectedParagraphs.map(p => p.text).join("\n\n")
+    const summary = `[内容已截断] 原文共 ${content.length} 字符 (约 ${totalTokens} tokens)，已保留 ${truncatedContent.length} 字符 (约 ${usedTokens} tokens)。保留了 ${selectedParagraphs.length} 个段落，包括标题、介绍部分、结论部分和重要的中间段落。`
+
+    return {
+      truncatedContent,
+      isTruncated: true,
+      totalLength: content.length,
+      truncatedLength: truncatedContent.length,
+      summary,
+    }
+  }
+
+  // 检测页面类型
+  const detectPageType = (): "html" | "pdf" | "text" => {
+    // 检查是否是 PDF 查看器页面
+    if (document.contentType === "application/pdf" || 
+        window.location.href.endsWith(".pdf") ||
+        document.querySelector("embed[type='application/pdf']") ||
+        document.querySelector("object[type='application/pdf']")) {
+      return "pdf"
+    }
+    
+    // 检查是否是纯文本页面
+    if (document.contentType === "text/plain") {
+      return "text"
+    }
+    
+    return "html"
+  }
+
+  // 清理 HTML 内容中的噪音
+  const cleanHtmlContent = (doc: Document): Document => {
+    const clone = doc.cloneNode(true) as Document
+    
+    const noiseSelectors = [
+      "script", "style", "noscript", "iframe",
+      "nav", "header", "footer", "aside",
+      ".ad", ".ads", ".advertisement", ".advertising",
+      ".banner", ".sidebar", ".widget",
+      ".comments", ".comment-section",
+      ".social", ".share", ".like",
+      ".related", ".recommended", ".trending",
+      ".cookie", ".gdpr", ".consent",
+      ".popup", ".modal", ".overlay",
+      "#ad", "#ads", "#advertisement",
+      "#sidebar", "#widget",
+      "[role='banner']", "[role='complementary']",
+      "[data-ad]", "[class*='ad-']",
+      "[id*='ad-']",
+    ]
+    
+    noiseSelectors.forEach(selector => {
+      try {
+        const elements = clone.querySelectorAll(selector)
+        elements.forEach(el => el.remove())
+      } catch (e) {
+        // 忽略无效选择器
+      }
+    })
+    
+    // 移除空的段落和容器
+    const emptyElements = clone.querySelectorAll("p:empty, div:empty, span:empty")
+    emptyElements.forEach(el => {
+      if (el.textContent?.trim() === "") {
+        el.remove()
+      }
+    })
+    
+    return clone
+  }
+
+  // 备用提取方法
+  const extractWithFallback = (doc: Document): { title: string; content: string } => {
+    const title = doc.title || ""
+    
+    const mainSelectors = [
+      "main", "article", "[role='main']",
+      ".post", ".article", ".content", "#content",
+      ".post-content", ".article-content", ".entry-content",
+      "[class*='content']", "[id*='content']",
+    ]
+    
+    let mainContent = ""
+    
+    for (const selector of mainSelectors) {
+      try {
+        const element = doc.querySelector(selector)
+        const textContent = element?.textContent ?? ""
+        if (element && textContent.trim().length > 500) {
+          mainContent = textContent
+          break
+        }
+      } catch (e) {
+        continue
+      }
+    }
+    
+    // 如果没有找到主要内容区域，收集所有段落
+    if (!mainContent) {
+      const paragraphs = doc.querySelectorAll("p")
+      const texts: string[] = []
+      let totalLength = 0
+      
+      paragraphs.forEach((p) => {
+        const text = p.textContent?.trim() || ""
+        if (text.length > 50) {
+          texts.push(text)
+          totalLength += text.length
+          if (texts.length >= 50 || totalLength >= 20000) {
+            return
+          }
+        }
+      })
+      
+      mainContent = texts.join("\n\n")
+    }
+    
+    // 如果还是没有内容，使用整个 body
+    if (!mainContent || mainContent.trim().length < 100) {
+      mainContent = doc.body.textContent || ""
+    }
+    
+    return { title, content: mainContent }
+  }
+
   const getPageContent = async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (tab.id) {
-        const results = await chrome.scripting.executeScript({
+        // 首先检测页面类型
+        const typeResults = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: () => {
-            let title = document.title || ""
-            let content = ""
+          func: detectPageType
+        })
 
-            const mainContent = document.querySelector('main, article, [role="main"], .post, .article, #content')
-            if (mainContent) {
-              content = (mainContent as HTMLElement).innerText
-            } else {
-              const paragraphs = document.querySelectorAll('p')
-              if (paragraphs.length > 3) {
+        const pageType = typeResults?.[0]?.result || "html"
+
+        // 根据页面类型选择不同的提取策略
+        if (pageType === "pdf") {
+          // PDF 页面需要特殊处理
+          // 首先尝试从页面 DOM 中提取文本（适用于某些 PDF 查看器）
+          const pdfDomResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              const url = window.location.href
+              const title = document.title || "PDF Document"
+              
+              // 尝试从不同类型的 PDF 查看器中提取文本
+              let content = ""
+              
+              // 1. 尝试查找文本层（许多现代 PDF 查看器使用）
+              const textLayers = document.querySelectorAll('[class*="textLayer"], [id*="textLayer"]')
+              if (textLayers.length > 0) {
                 const texts: string[] = []
-                paragraphs.forEach((p, i) => {
-                  if (i < 20) texts.push((p as HTMLElement).innerText)
+                textLayers.forEach(layer => {
+                  const text = layer.textContent?.trim() || ""
+                  if (text.length > 0) {
+                    texts.push(text)
+                  }
                 })
                 content = texts.join("\n\n")
-              } else {
-                content = document.body.innerText
+              }
+              
+              // 2. 尝试查找 canvas 旁边的隐藏文本（某些查看器的做法）
+              if (!content) {
+                const hiddenTexts = document.querySelectorAll('span[style*="hidden"], div[style*="hidden"]')
+                const texts: string[] = []
+                hiddenTexts.forEach(el => {
+                  const text = el.textContent?.trim() || ""
+                  if (text.length > 20) {
+                    texts.push(text)
+                  }
+                })
+                if (texts.length > 0) {
+                  content = texts.join("\n\n")
+                }
+              }
+              
+              // 3. 尝试从 body 中提取所有文本（备用方案）
+              if (!content) {
+                content = document.body.textContent || ""
+              }
+              
+              // 4. 检查是否可以通过 fetch 获取 PDF 原始数据
+              // 这需要在页面上下文中执行，以携带 cookie
+              let canFetchPdf = false
+              const pdfUrl = url
+              if (pdfUrl.endsWith('.pdf') || document.contentType === 'application/pdf') {
+                canFetchPdf = true
+              }
+              
+              return {
+                title,
+                content,
+                url,
+                contentType: "pdf",
+                canFetchPdf,
+                pdfUrl
               }
             }
+          })
 
-            return {
-              title: title.slice(0, 200),
-              content: content.slice(0, 6000),
-              url: window.location.href
+          let finalPdfContent = ""
+          let pdfTitle = ""
+          let pdfUrl = ""
+          
+          if (pdfDomResults && pdfDomResults[0]?.result) {
+            const result = pdfDomResults[0].result as any
+            pdfTitle = result.title
+            pdfUrl = result.url
+            finalPdfContent = result.content
+            
+            // 如果 DOM 提取的内容很少，尝试使用 pdf.js 解析
+            if (result.canFetchPdf && result.content.length < 1000) {
+              try {
+                // 尝试在页面上下文中注入 pdf.js 并提取文本
+                // 注意：这是一个复杂的操作，我们先尝试简单的方法
+                
+                // 方法 1：尝试使用 fetch 获取 PDF 数据并转换为 base64
+                const pdfDataResults = await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  func: async () => {
+                    const url = window.location.href
+                    try {
+                      // 尝试获取 PDF 的 ArrayBuffer
+                      const response = await fetch(url, {
+                        credentials: 'include', // 携带 cookie
+                        mode: 'cors'
+                      })
+                      
+                      if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer()
+                        // 转换为 base64 以便传递
+                        const uint8Array = new Uint8Array(arrayBuffer)
+                        let binary = ''
+                        for (let i = 0; i < uint8Array.byteLength; i++) {
+                          binary += String.fromCharCode(uint8Array[i])
+                        }
+                        const base64 = btoa(binary)
+                        return {
+                          success: true,
+                          data: base64,
+                          url
+                        }
+                      }
+                    } catch (e) {
+                      // fetch 可能因为 CORS 失败
+                    }
+                    return { success: false, url }
+                  }
+                })
+                
+                if (pdfDataResults && pdfDataResults[0]?.result?.success) {
+                  // 有了 PDF 数据，现在需要在扩展上下文中使用 pdf.js 解析
+                  try {
+                    // 动态导入 pdf.js
+                    const pdfjsLib = await import('pdfjs-dist')
+                    
+                    // 设置 worker
+                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+                    
+                    // 解码 base64 数据
+                    const base64Data = pdfDataResults[0].result.data ?? ""
+                    const binaryString = atob(base64Data)
+                    const uint8Array = new Uint8Array(binaryString.length)
+                    for (let i = 0; i < binaryString.length; i++) {
+                      uint8Array[i] = binaryString.charCodeAt(i)
+                    }
+                    
+                    // 加载 PDF 文档
+                    const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise
+                    
+                    // 提取所有页面的文本
+                    const fullText: string[] = []
+                    const numPages = pdf.numPages
+                    
+                    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+                      const page = await pdf.getPage(pageNum)
+                      const textContent = await page.getTextContent()
+                      
+                      const pageText: string[] = []
+                      let lastY = 0
+                      let lastFontSize = 0
+                      
+                      textContent.items.forEach((item: any) => {
+                        // 检测换行（基于 Y 坐标变化或字体大小变化）
+                        if (Math.abs(item.transform[5] - lastY) > 5 || 
+                            (item.height && Math.abs(item.height - lastFontSize) > 2)) {
+                          pageText.push('\n')
+                        }
+                        pageText.push(item.str)
+                        lastY = item.transform[5]
+                        if (item.height) lastFontSize = item.height
+                      })
+                      
+                      fullText.push(`--- 第 ${pageNum} 页 ---\n${pageText.join(' ')}`)
+                    }
+                    
+                    finalPdfContent = fullText.join('\n\n')
+                  } catch (pdfError) {
+                    console.error("PDF 解析失败:", pdfError)
+                    // 如果 pdf.js 解析失败，继续使用之前的内容
+                  }
+                }
+              } catch (fetchError) {
+                console.error("获取 PDF 数据失败:", fetchError)
+              }
             }
           }
-        })
-        if (results && results[0]?.result) {
-          const result = results[0].result as { title: string; content: string; url: string }
-          return result
+          
+          // 应用智能截断
+          const truncationResult = smartTruncate(pdfTitle, finalPdfContent)
+          return {
+            title: pdfTitle,
+            content: truncationResult.truncatedContent,
+            url: pdfUrl,
+            isTruncated: truncationResult.isTruncated,
+            summary: truncationResult.summary,
+            contentType: "pdf"
+          }
+        } else {
+          // HTML 或文本页面，使用增强的提取逻辑
+          const htmlResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              // 内联 Readability 简化版功能
+              // 由于 chrome.scripting.executeScript 无法直接使用导入的模块，
+              // 我们实现一个简化版的内容提取逻辑
+              
+              const cleanHtmlContent = (doc: Document): Document => {
+                const clone = doc.cloneNode(true) as Document
+                
+                const noiseSelectors = [
+                  "script", "style", "noscript", "iframe",
+                  "nav", "header", "footer", "aside",
+                  ".ad", ".ads", ".advertisement", ".advertising",
+                  ".banner", ".sidebar", ".widget",
+                  ".comments", ".comment-section",
+                  ".social", ".share", ".like",
+                  ".related", ".recommended", ".trending",
+                  ".cookie", ".gdpr", ".consent",
+                  ".popup", ".modal", ".overlay",
+                ]
+                
+                noiseSelectors.forEach(selector => {
+                  try {
+                    const elements = clone.querySelectorAll(selector)
+                    elements.forEach(el => el.remove())
+                  } catch (e) {}
+                })
+                
+                return clone
+              }
+
+              const extractMainContent = (doc: Document): { title: string; content: string } => {
+                const title = doc.title || ""
+                
+                // 尝试使用 Readability 风格的提取
+                // 1. 清理文档
+                const cleanedDoc = cleanHtmlContent(doc)
+                
+                // 2. 尝试查找主要内容区域
+                const mainSelectors = [
+                  "main", "article", "[role='main']",
+                  ".post", ".article", ".content", "#content",
+                  ".post-content", ".article-content", ".entry-content",
+                ]
+                
+                let mainContent = ""
+                
+                for (const selector of mainSelectors) {
+                  try {
+                    const element = cleanedDoc.querySelector(selector)
+                    const textContent = element?.textContent ?? ""
+                    if (element && textContent.trim().length > 500) {
+                      mainContent = textContent
+                      break
+                    }
+                  } catch (e) {}
+                }
+                
+                // 3. 如果没有找到，收集所有有意义的段落
+                if (!mainContent || mainContent.trim().length < 100) {
+                  const paragraphs = cleanedDoc.querySelectorAll("p")
+                  const texts: string[] = []
+                  
+                  paragraphs.forEach((p) => {
+                    const text = p.textContent?.trim() || ""
+                    if (text.length > 30) {
+                      texts.push(text)
+                    }
+                  })
+                  
+                  mainContent = texts.join("\n\n")
+                }
+                
+                // 4. 最终备用方案
+                if (!mainContent || mainContent.trim().length < 100) {
+                  mainContent = cleanedDoc.body.textContent || ""
+                }
+                
+                return { title, content: mainContent }
+              }
+
+              // 执行提取
+              const result = extractMainContent(document)
+              return {
+                title: result.title,
+                content: result.content,
+                url: window.location.href,
+                contentType: "html"
+              }
+            }
+          })
+
+          if (htmlResults && htmlResults[0]?.result) {
+            const result = htmlResults[0].result as { title: string; content: string; url: string; contentType: string }
+            const truncationResult = smartTruncate(result.title, result.content)
+            return {
+              title: result.title,
+              content: truncationResult.truncatedContent,
+              url: result.url,
+              isTruncated: truncationResult.isTruncated,
+              summary: truncationResult.summary,
+              contentType: result.contentType
+            }
+          }
         }
       }
     } catch (error) {
       console.error("Failed to get page content:", error)
     }
-    return { title: "", content: "", url: "" }
+    return { title: "", content: "", url: "", isTruncated: false, contentType: "html" as const }
   }
 
   const callOpenAI = async (msgs: Message[]): Promise<string> => {
@@ -530,19 +1047,34 @@ function SidePanel() {
     try {
       const pageInfo = await getPageContent()
 
-      let contextPrompt = "用户正在浏览一个网页。"
+      // 根据内容类型设置初始提示
+      let contextPrompt = ""
+      if (pageInfo.contentType === "pdf") {
+        contextPrompt = "用户正在浏览一个 PDF 文档。"
+      } else if (pageInfo.contentType === "text") {
+        contextPrompt = "用户正在浏览一个纯文本页面。"
+      } else {
+        contextPrompt = "用户正在浏览一个网页。"
+      }
 
       if (pageInfo.title) {
-        contextPrompt += `\n\n网页标题：${pageInfo.title}`
+        contextPrompt += `\n\n文档标题：${pageInfo.title}`
       }
       if (pageInfo.url) {
         try {
           const urlObj = new URL(pageInfo.url)
-          contextPrompt += `\n网站：${urlObj.hostname}`
+          contextPrompt += `\n来源网站：${urlObj.hostname}`
         } catch {}
       }
+      
+      // 添加截断信息（如果有）
+      if (pageInfo.isTruncated && pageInfo.summary) {
+        contextPrompt += `\n\n${pageInfo.summary}`
+      }
+      
+      // 添加内容（已通过智能截断处理）
       if (pageInfo.content && pageInfo.content.length > 50) {
-        contextPrompt += `\n\n网页内容（开头部分）：\n${pageInfo.content.slice(0, 4000)}`
+        contextPrompt += `\n\n文档内容：\n${pageInfo.content}`
       }
 
       const roundId = generateId()
