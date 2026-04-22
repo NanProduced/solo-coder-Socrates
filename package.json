@@ -30,12 +30,15 @@
   },
   "manifest": {
     "host_permissions": [
-      "https://*/*"
+      "https://*/*",
+      "http://*/*",
+      "file://*/*"
     ],
     "permissions": [
       "activeTab",
       "storage",
       "scripting"
-    ]
+    ],
+    "optional_permissions": []
   }
 }

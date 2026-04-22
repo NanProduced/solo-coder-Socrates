@@ -10,6 +10,18 @@ export const DEFAULT_OPENAI_CONFIG: OpenAIConfig = {
   model: "gpt-4o"
 }
 
+// 内容提取结果类型
+export interface ExtractedContent {
+  success: boolean
+  title: string
+  content: string
+  url: string
+  contentType: "html" | "pdf" | "text"
+  isTruncated: boolean
+  summary?: string
+  error?: string
+}
+
 export interface Message {
   id: string
   role: "user" | "assistant" | "system"
