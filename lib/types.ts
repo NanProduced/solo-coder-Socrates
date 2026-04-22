@@ -38,18 +38,18 @@ export const TRACKING_PARAMS: string[] = [
   "fbclid",
   "gclid",
   "gclsrc",
-  "dclid",
-  "ref",
-  "source"
+  "dclid"
 ]
 
 export const SUMMARY_KEYWORDS: string[] = [
-  "总结",
   "帮我总结",
   "请总结",
   "总结一下",
+  "总结吧",
   "summarize",
-  "summary"
+  "summary",
+  "give me a summary",
+  "please summarize"
 ]
 
 export function generatePageKey(url: string): string {
@@ -76,5 +76,7 @@ export function generatePageKey(url: string): string {
 
 export function isSummaryRequest(content: string): boolean {
   const lower = content.toLowerCase().trim()
-  return SUMMARY_KEYWORDS.some((kw) => lower.includes(kw))
+  if (SUMMARY_KEYWORDS.some((kw) => lower.includes(kw))) return true
+  if (/^总结[了啊吧]?$/i.test(lower.trim())) return true
+  return false
 }
