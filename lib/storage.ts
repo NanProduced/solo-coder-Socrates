@@ -17,6 +17,9 @@ import {
 
 const storage = new Storage()
 
+const MAX_CONVERSATIONS_PER_PAGE = 10
+const MAX_MESSAGES_PER_CONVERSATION = 50
+
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).slice(2, 11)
 }
@@ -49,6 +52,14 @@ export function generatePageId(url: string): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=/g, "")
+}
+
+function trimMessagesForStorage(messages: Message[]): Message[] {
+  const visibleMessages = messages.filter((m) => m.visible)
+  if (visibleMessages.length <= MAX_MESSAGES_PER_CONVERSATION) {
+    return visibleMessages
+  }
+  return visibleMessages.slice(visibleMessages.length - MAX_MESSAGES_PER_CONVERSATION)
 }
 
 async function getPageIndex(): Promise<PageIndex> {
@@ -112,6 +123,37 @@ async function deleteConversationStorage(convId: string): Promise<void> {
   ])
 }
 
+async function cleanupOldConversations(pageId: string, keepCount: number): Promise<void> {
+  const index = await getPageIndex()
+  const pageInfo = index.pages[pageId]
+  
+  if (!pageInfo || pageInfo.conversationIds.length <= keepCount) {
+    return
+  }
+  
+  const convIds = [...pageInfo.conversationIds]
+  const metas = await Promise.all(
+    convIds.map((id) => getConversationMeta(id))
+  )
+  
+  const validMetas = metas
+    .filter((m): m is ConversationMeta & { id: string } => m !== null)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+  
+  const toDelete = validMetas.slice(keepCount)
+  
+  for (const meta of toDelete) {
+    const idx = pageInfo.conversationIds.indexOf(meta.id)
+    if (idx !== -1) {
+      pageInfo.conversationIds.splice(idx, 1)
+    }
+    await deleteConversationStorage(meta.id)
+  }
+  
+  pageInfo.updatedAt = Date.now()
+  await savePageIndex(index)
+}
+
 export async function getOrCreatePageInfo(
   pageId: string,
   pageTitle: string,
@@ -155,8 +197,8 @@ export async function createConversation(
   const now = Date.now()
   const convId = generateId()
   
-  const visibleMessages = initialMessages.filter((m) => m.visible)
-  const lastMessage = visibleMessages[visibleMessages.length - 1]
+  const trimmedMessages = trimMessagesForStorage(initialMessages)
+  const lastMessage = trimmedMessages[trimmedMessages.length - 1]
   
   const conversation: Conversation = {
     id: convId,
@@ -190,11 +232,38 @@ export async function createConversation(
   index.pages[pageId].pageTitle = pageTitle
   index.pages[pageId].pageUrl = pageUrl
   
-  await Promise.all([
-    savePageIndex(index),
-    saveConversationMeta(meta),
-    saveConversationMessages(msgs),
-  ])
+  try {
+    await Promise.all([
+      savePageIndex(index),
+      saveConversationMeta(meta),
+      saveConversationMessages({ ...msgs, messages: trimmedMessages }),
+    ])
+  } catch (saveError) {
+    console.error("保存对话失败，尝试清理旧数据:", saveError)
+    
+    try {
+      await cleanupOldConversations(pageId, Math.floor(MAX_CONVERSATIONS_PER_PAGE / 2))
+      
+      await Promise.all([
+        savePageIndex(index),
+        saveConversationMeta(meta),
+        saveConversationMessages({ ...msgs, messages: trimmedMessages }),
+      ])
+    } catch (cleanupError) {
+      console.error("清理后仍然保存失败:", cleanupError)
+      throw saveError
+    }
+  }
+  
+  if (index.pages[pageId].conversationIds.length > MAX_CONVERSATIONS_PER_PAGE + 2) {
+    ;(async () => {
+      try {
+        await cleanupOldConversations(pageId, MAX_CONVERSATIONS_PER_PAGE)
+      } catch (e) {
+        console.error("清理旧对话失败:", e)
+      }
+    })()
+  }
   
   return conversation
 }
@@ -256,19 +325,35 @@ export async function addMessagesToConversation(
   
   msgs.messages.push(...messages)
   
-  const visibleMessages = msgs.messages.filter((m) => m.visible)
-  const lastMessage = visibleMessages[visibleMessages.length - 1]
+  const trimmedMessages = trimMessagesForStorage(msgs.messages)
+  const lastMessage = trimmedMessages[trimmedMessages.length - 1]
   
   meta.updatedAt = Date.now()
-  meta.messageCount = msgs.messages.length
+  meta.messageCount = trimmedMessages.length
   if (lastMessage) {
     meta.lastMessagePreview = lastMessage.content.slice(0, 100)
   }
   
-  await Promise.all([
-    saveConversationMeta(meta),
-    saveConversationMessages(msgs),
-  ])
+  try {
+    await Promise.all([
+      saveConversationMeta(meta),
+      saveConversationMessages({ ...msgs, messages: trimmedMessages }),
+    ])
+  } catch (saveError) {
+    console.error("保存消息失败:", saveError)
+    
+    try {
+      await cleanupOldConversations(pageId, Math.floor(MAX_CONVERSATIONS_PER_PAGE / 2))
+      
+      await Promise.all([
+        saveConversationMeta(meta),
+        saveConversationMessages({ ...msgs, messages: trimmedMessages }),
+      ])
+    } catch (cleanupError) {
+      console.error("清理后仍然保存失败:", cleanupError)
+      throw saveError
+    }
+  }
   
   const index = await getPageIndex()
   if (index.pages[pageId]) {
