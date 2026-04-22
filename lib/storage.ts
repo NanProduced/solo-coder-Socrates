@@ -1,12 +1,18 @@
 import { Storage } from "@plasmohq/storage"
 import {
   Conversation,
-  ConversationStore,
-  DEFAULT_CONVERSATION_STORE,
-  PageHistory,
-  Message,
+  ConversationMeta,
+  ConversationMessages,
+  DEFAULT_PAGE_INDEX,
+  PageInfo,
+  PageIndex,
   STORAGE_KEYS,
+  Message,
   ConversationStatus,
+  convMetaKey,
+  convMsgsKey,
+  mergeConversation,
+  splitConversation,
 } from "./types"
 
 const storage = new Storage()
@@ -45,53 +51,98 @@ export function generatePageId(url: string): string {
     .replace(/=/g, "")
 }
 
-async function getStore(): Promise<ConversationStore> {
+async function getPageIndex(): Promise<PageIndex> {
   try {
-    const stored = await storage.get<ConversationStore>(STORAGE_KEYS.CONVERSATIONS)
+    const stored = await storage.get<PageIndex>(STORAGE_KEYS.PAGE_INDEX)
     if (stored && stored.version) {
       return stored
     }
-    return DEFAULT_CONVERSATION_STORE
+    return DEFAULT_PAGE_INDEX
   } catch {
-    return DEFAULT_CONVERSATION_STORE
+    return DEFAULT_PAGE_INDEX
   }
 }
 
-async function saveStore(store: ConversationStore): Promise<void> {
-  await storage.set(STORAGE_KEYS.CONVERSATIONS, store)
+async function savePageIndex(index: PageIndex): Promise<void> {
+  await storage.set(STORAGE_KEYS.PAGE_INDEX, index)
 }
 
-export async function getOrCreatePageHistory(
+async function getConversationMeta(convId: string): Promise<ConversationMeta | null> {
+  try {
+    const key = convMetaKey(convId)
+    const meta = await storage.get<ConversationMeta>(key)
+    if (meta && meta.id) {
+      return meta
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function saveConversationMeta(meta: ConversationMeta): Promise<void> {
+  const key = convMetaKey(meta.id)
+  await storage.set(key, meta)
+}
+
+async function getConversationMessages(convId: string): Promise<ConversationMessages | null> {
+  try {
+    const key = convMsgsKey(convId)
+    const msgs = await storage.get<ConversationMessages>(key)
+    if (msgs && msgs.conversationId) {
+      return msgs
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function saveConversationMessages(msgs: ConversationMessages): Promise<void> {
+  const key = convMsgsKey(msgs.conversationId)
+  await storage.set(key, msgs)
+}
+
+async function deleteConversationStorage(convId: string): Promise<void> {
+  const metaKey = convMetaKey(convId)
+  const msgsKey = convMsgsKey(convId)
+  await Promise.all([
+    storage.remove(metaKey),
+    storage.remove(msgsKey),
+  ])
+}
+
+export async function getOrCreatePageInfo(
   pageId: string,
   pageTitle: string,
   pageUrl: string,
-): Promise<PageHistory> {
-  const store = await getStore()
-  let pageHistory = store.pages[pageId]
-  if (!pageHistory) {
+): Promise<PageInfo> {
+  const index = await getPageIndex()
+  let pageInfo = index.pages[pageId]
+  if (!pageInfo) {
     const now = Date.now()
-    pageHistory = {
+    pageInfo = {
       pageId,
       pageTitle,
       pageUrl,
-      conversations: [],
+      conversationIds: [],
       createdAt: now,
       updatedAt: now,
     }
-    store.pages[pageId] = pageHistory
-    await saveStore(store)
+    index.pages[pageId] = pageInfo
+    await savePageIndex(index)
   }
-  return pageHistory
+  return pageInfo
 }
 
 export async function updatePageInfo(pageId: string, pageTitle: string, pageUrl: string): Promise<void> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (pageHistory) {
-    pageHistory.pageTitle = pageTitle
-    pageHistory.pageUrl = pageUrl
-    pageHistory.updatedAt = Date.now()
-    await saveStore(store)
+  const index = await getPageIndex()
+  const pageInfo = index.pages[pageId]
+  if (pageInfo) {
+    pageInfo.pageTitle = pageTitle
+    pageInfo.pageUrl = pageUrl
+    pageInfo.updatedAt = Date.now()
+    await savePageIndex(index)
   }
 }
 
@@ -101,12 +152,14 @@ export async function createConversation(
   pageUrl: string,
   initialMessages: Message[] = [],
 ): Promise<Conversation> {
-  const store = await getStore()
   const now = Date.now()
+  const convId = generateId()
+  
   const visibleMessages = initialMessages.filter((m) => m.visible)
   const lastMessage = visibleMessages[visibleMessages.length - 1]
+  
   const conversation: Conversation = {
-    id: generateId(),
+    id: convId,
     pageId,
     pageTitle,
     pageUrl,
@@ -116,37 +169,70 @@ export async function createConversation(
     updatedAt: now,
     lastMessagePreview: lastMessage ? lastMessage.content.slice(0, 100) : undefined,
   }
-  if (!store.pages[pageId]) {
-    store.pages[pageId] = {
+  
+  const { meta, msgs } = splitConversation(conversation)
+  
+  const index = await getPageIndex()
+  
+  if (!index.pages[pageId]) {
+    index.pages[pageId] = {
       pageId,
       pageTitle,
       pageUrl,
-      conversations: [],
+      conversationIds: [],
       createdAt: now,
       updatedAt: now,
     }
   }
-  store.pages[pageId].conversations.push(conversation)
-  store.pages[pageId].updatedAt = now
-  store.pages[pageId].pageTitle = pageTitle
-  store.pages[pageId].pageUrl = pageUrl
-  await saveStore(store)
+  
+  index.pages[pageId].conversationIds.push(convId)
+  index.pages[pageId].updatedAt = now
+  index.pages[pageId].pageTitle = pageTitle
+  index.pages[pageId].pageUrl = pageUrl
+  
+  await Promise.all([
+    savePageIndex(index),
+    saveConversationMeta(meta),
+    saveConversationMessages(msgs),
+  ])
+  
   return conversation
 }
 
 export async function getConversation(pageId: string, conversationId: string): Promise<Conversation | null> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return null
-  return pageHistory.conversations.find((c) => c.id === conversationId) || null
+  const meta = await getConversationMeta(conversationId)
+  if (!meta) return null
+  
+  const msgs = await getConversationMessages(conversationId)
+  if (!msgs) return null
+  
+  return mergeConversation(meta, msgs)
 }
 
 export async function getLatestConversation(pageId: string): Promise<Conversation | null> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory || pageHistory.conversations.length === 0) return null
-  const sorted = [...pageHistory.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
-  return sorted[0]
+  const index = await getPageIndex()
+  const pageInfo = index.pages[pageId]
+  
+  if (!pageInfo || pageInfo.conversationIds.length === 0) return null
+  
+  const convIds = [...pageInfo.conversationIds]
+  
+  const metas = await Promise.all(
+    convIds.map((id) => getConversationMeta(id))
+  )
+  
+  const validMetas = metas.filter((m): m is ConversationMeta => m !== null)
+  
+  if (validMetas.length === 0) return null
+  
+  validMetas.sort((a, b) => b.updatedAt - a.updatedAt)
+  
+  const latestMeta = validMetas[0]
+  const msgs = await getConversationMessages(latestMeta.id)
+  
+  if (!msgs) return null
+  
+  return mergeConversation(latestMeta, msgs)
 }
 
 export async function addMessageToConversation(
@@ -154,19 +240,7 @@ export async function addMessageToConversation(
   conversationId: string,
   message: Message,
 ): Promise<Conversation | null> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return null
-  const conversation = pageHistory.conversations.find((c) => c.id === conversationId)
-  if (!conversation) return null
-  conversation.messages.push(message)
-  conversation.updatedAt = Date.now()
-  if (message.visible) {
-    conversation.lastMessagePreview = message.content.slice(0, 100)
-  }
-  pageHistory.updatedAt = Date.now()
-  await saveStore(store)
-  return conversation
+  return addMessagesToConversation(pageId, conversationId, [message])
 }
 
 export async function addMessagesToConversation(
@@ -174,21 +248,35 @@ export async function addMessagesToConversation(
   conversationId: string,
   messages: Message[],
 ): Promise<Conversation | null> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return null
-  const conversation = pageHistory.conversations.find((c) => c.id === conversationId)
-  if (!conversation) return null
-  conversation.messages.push(...messages)
-  conversation.updatedAt = Date.now()
-  const visibleMessages = messages.filter((m) => m.visible)
-  const lastVisible = visibleMessages[visibleMessages.length - 1]
-  if (lastVisible) {
-    conversation.lastMessagePreview = lastVisible.content.slice(0, 100)
+  const meta = await getConversationMeta(conversationId)
+  if (!meta) return null
+  
+  const msgs = await getConversationMessages(conversationId)
+  if (!msgs) return null
+  
+  msgs.messages.push(...messages)
+  
+  const visibleMessages = msgs.messages.filter((m) => m.visible)
+  const lastMessage = visibleMessages[visibleMessages.length - 1]
+  
+  meta.updatedAt = Date.now()
+  meta.messageCount = msgs.messages.length
+  if (lastMessage) {
+    meta.lastMessagePreview = lastMessage.content.slice(0, 100)
   }
-  pageHistory.updatedAt = Date.now()
-  await saveStore(store)
-  return conversation
+  
+  await Promise.all([
+    saveConversationMeta(meta),
+    saveConversationMessages(msgs),
+  ])
+  
+  const index = await getPageIndex()
+  if (index.pages[pageId]) {
+    index.pages[pageId].updatedAt = Date.now()
+    await savePageIndex(index)
+  }
+  
+  return mergeConversation(meta, msgs)
 }
 
 export async function updateConversationStatus(
@@ -196,42 +284,82 @@ export async function updateConversationStatus(
   conversationId: string,
   status: ConversationStatus,
 ): Promise<Conversation | null> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return null
-  const conversation = pageHistory.conversations.find((c) => c.id === conversationId)
-  if (!conversation) return null
-  conversation.status = status
-  conversation.updatedAt = Date.now()
-  pageHistory.updatedAt = Date.now()
-  await saveStore(store)
-  return conversation
+  const meta = await getConversationMeta(conversationId)
+  if (!meta) return null
+  
+  meta.status = status
+  meta.updatedAt = Date.now()
+  
+  await saveConversationMeta(meta)
+  
+  const index = await getPageIndex()
+  if (index.pages[pageId]) {
+    index.pages[pageId].updatedAt = Date.now()
+    await savePageIndex(index)
+  }
+  
+  const msgs = await getConversationMessages(conversationId)
+  if (!msgs) return null
+  
+  return mergeConversation(meta, msgs)
 }
 
 export async function getAllConversationsForPage(pageId: string): Promise<Conversation[]> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return []
-  return [...pageHistory.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+  const index = await getPageIndex()
+  const pageInfo = index.pages[pageId]
+  
+  if (!pageInfo || pageInfo.conversationIds.length === 0) return []
+  
+  const conversations: Conversation[] = []
+  
+  for (const convId of pageInfo.conversationIds) {
+    const conv = await getConversation(pageId, convId)
+    if (conv) {
+      conversations.push(conv)
+    }
+  }
+  
+  conversations.sort((a, b) => b.updatedAt - a.updatedAt)
+  
+  return conversations
 }
 
 export async function deleteConversation(pageId: string, conversationId: string): Promise<boolean> {
-  const store = await getStore()
-  const pageHistory = store.pages[pageId]
-  if (!pageHistory) return false
-  const index = pageHistory.conversations.findIndex((c) => c.id === conversationId)
-  if (index === -1) return false
-  pageHistory.conversations.splice(index, 1)
-  pageHistory.updatedAt = Date.now()
-  if (pageHistory.conversations.length === 0) {
-    delete store.pages[pageId]
+  const index = await getPageIndex()
+  const pageInfo = index.pages[pageId]
+  
+  if (!pageInfo) return false
+  
+  const convIndex = pageInfo.conversationIds.indexOf(conversationId)
+  if (convIndex === -1) return false
+  
+  pageInfo.conversationIds.splice(convIndex, 1)
+  pageInfo.updatedAt = Date.now()
+  
+  if (pageInfo.conversationIds.length === 0) {
+    delete index.pages[pageId]
   }
-  await saveStore(store)
+  
+  await Promise.all([
+    savePageIndex(index),
+    deleteConversationStorage(conversationId),
+  ])
+  
   return true
 }
 
 export async function clearAllConversations(): Promise<void> {
-  await storage.set(STORAGE_KEYS.CONVERSATIONS, DEFAULT_CONVERSATION_STORE)
+  const index = await getPageIndex()
+  
+  const allConvIds: string[] = []
+  for (const pageId in index.pages) {
+    allConvIds.push(...index.pages[pageId].conversationIds)
+  }
+  
+  await Promise.all([
+    storage.set(STORAGE_KEYS.PAGE_INDEX, DEFAULT_PAGE_INDEX),
+    ...allConvIds.map((id) => deleteConversationStorage(id)),
+  ])
 }
 
 export function getLastVisibleMessagePreview(conversation: Conversation): string | null {
