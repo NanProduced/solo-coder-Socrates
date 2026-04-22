@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
-import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
+import {
+  OpenAIConfig,
+  DEFAULT_OPENAI_CONFIG,
+  Message,
+  ConversationRound,
+  generatePageKey,
+  isSummaryRequest,
+} from "./lib/types"
+import { loadPageConversations, savePageConversations } from "./lib/storage"
 import "./style.css"
-
-interface Message {
-  id: string
-  role: "user" | "assistant" | "system"
-  content: string
-  timestamp: number
-  visible: boolean
-}
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
 
@@ -131,17 +131,68 @@ const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean
   )
 }
 
+const formatTime = (timestamp: number): string => {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const isToday = date.toDateString() === now.toDateString()
+  if (isToday) {
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+  }
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) {
+    return "昨天 " + date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+  }
+  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })
+}
+
 function SidePanel() {
   const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [pageKey, setPageKey] = useState("")
+  const [rounds, setRounds] = useState<ConversationRound[]>([])
+  const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
+  const [viewingRoundId, setViewingRoundId] = useState<string | null>(null)
+  const [historyExpanded, setHistoryExpanded] = useState(false)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [hasConfig, setHasConfig] = useState(false)
-  const [conversationStarted, setConversationStarted] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [pageTitle, setPageTitle] = useState("")
+  const [pageUrl, setPageUrl] = useState("")
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pageKeyRef = useRef("")
+
+  useEffect(() => {
+    pageKeyRef.current = pageKey
+  }, [pageKey])
+
+  const activeRound = useMemo(
+    () => rounds.find((r) => r.id === activeRoundId) ?? null,
+    [rounds, activeRoundId]
+  )
+
+  const viewingRound = useMemo(
+    () =>
+      viewingRoundId
+        ? rounds.find((r) => r.id === viewingRoundId) ?? null
+        : activeRound,
+    [rounds, viewingRoundId, activeRound]
+  )
+
+  const messages = useMemo(() => viewingRound?.messages ?? [], [viewingRound])
+  const displayMessages = useMemo(() => messages.filter((m) => m.visible), [messages])
+
+  const conversationStarted = !!activeRound
+  const isRoundCompleted = viewingRound?.completed ?? false
+  const isViewingHistory = viewingRoundId !== null
+
+  const latestIncompleteRound = useMemo(
+    () => [...rounds].reverse().find((r) => !r.completed) ?? null,
+    [rounds]
+  )
 
   useEffect(() => {
     if (config) {
@@ -152,6 +203,9 @@ function SidePanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  const generateId = () =>
+    Date.now().toString() + Math.random().toString(36).slice(2, 11)
 
   const getPageContent = async () => {
     try {
@@ -197,9 +251,7 @@ function SidePanel() {
     return { title: "", content: "", url: "" }
   }
 
-  const generateId = () => Date.now().toString() + Math.random().toString(36).slice(2, 11)
-
-  const callOpenAI = async (messages: Message[]): Promise<string> => {
+  const callOpenAI = async (msgs: Message[]): Promise<string> => {
     if (!config.apiKey || !config.baseURL) {
       throw new Error("请先配置 API 参数")
     }
@@ -215,7 +267,7 @@ function SidePanel() {
       },
       body: JSON.stringify({
         model: config.model || "gpt-4o",
-        messages: messages.map(m => ({
+        messages: msgs.map(m => ({
           role: m.role,
           content: m.content
         })),
@@ -237,7 +289,89 @@ function SidePanel() {
     return content
   }
 
-  const startConversation = useCallback(async () => {
+  const persistRounds = async (newRounds: ConversationRound[]) => {
+    setRounds(newRounds)
+    const currentKey = pageKeyRef.current
+    if (currentKey) {
+      await savePageConversations(currentKey, newRounds)
+    }
+  }
+
+  const initializeForPage = useCallback(async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.url || !tab.url.startsWith("http")) {
+        setPageKey("")
+        setRounds([])
+        setActiveRoundId(null)
+        setViewingRoundId(null)
+        return
+      }
+
+      const key = generatePageKey(tab.url)
+
+      if (key === pageKeyRef.current) return
+
+      setPageKey(key)
+      setPageUrl(tab.url)
+      setPageTitle(tab.title ?? "")
+
+      const loadedRounds = await loadPageConversations(key)
+      setRounds(loadedRounds)
+
+      if (loadedRounds.length > 0) {
+        const latestIncomplete = [...loadedRounds]
+          .reverse()
+          .find((r) => !r.completed)
+        if (latestIncomplete) {
+          setActiveRoundId(latestIncomplete.id)
+        } else {
+          setActiveRoundId(loadedRounds[loadedRounds.length - 1].id)
+        }
+      } else {
+        setActiveRoundId(null)
+      }
+
+      setViewingRoundId(null)
+      setHistoryExpanded(false)
+      setErrorMessage(null)
+    } catch (error) {
+      console.error("Failed to initialize page:", error)
+    }
+  }, [])
+
+  useEffect(() => {
+    initializeForPage()
+  }, [initializeForPage])
+
+  useEffect(() => {
+    const handleTabUpdated = (
+      _tabId: number,
+      changeInfo: { url?: string }
+    ) => {
+      if (changeInfo.url) {
+        if (initTimerRef.current) clearTimeout(initTimerRef.current)
+        initTimerRef.current = setTimeout(() => {
+          initializeForPage()
+        }, 500)
+      }
+    }
+
+    const handleTabActivated = () => {
+      initializeForPage()
+    }
+
+    chrome.tabs.onUpdated.addListener(handleTabUpdated)
+    chrome.tabs.onActivated.addListener(handleTabActivated)
+
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handleTabUpdated)
+      chrome.tabs.onActivated.removeListener(handleTabActivated)
+      if (initTimerRef.current) clearTimeout(initTimerRef.current)
+    }
+  }, [initializeForPage])
+
+  const startConversation = async () => {
     if (!hasConfig) {
       chrome.runtime.openOptionsPage()
       return
@@ -264,6 +398,8 @@ function SidePanel() {
         contextPrompt += `\n\n网页内容（开头部分）：\n${pageInfo.content.slice(0, 4000)}`
       }
 
+      const roundId = generateId()
+
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
@@ -280,6 +416,23 @@ function SidePanel() {
         visible: false
       }
 
+      const newRound: ConversationRound = {
+        id: roundId,
+        pageKey,
+        messages: [initialMessage, firstUserMessage],
+        completed: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        pageTitle: pageInfo.title || pageTitle,
+        pageUrl: pageInfo.url || pageUrl,
+      }
+
+      const newRounds = [...rounds, newRound]
+      setRounds(newRounds)
+      setActiveRoundId(roundId)
+      setViewingRoundId(null)
+      if (pageKey) await savePageConversations(pageKey, newRounds)
+
       const aiResponse = await callOpenAI([initialMessage, firstUserMessage])
 
       const assistantMessage: Message = {
@@ -290,17 +443,25 @@ function SidePanel() {
         visible: true
       }
 
-      setMessages([initialMessage, firstUserMessage, assistantMessage])
-      setConversationStarted(true)
+      const updatedRound: ConversationRound = {
+        ...newRound,
+        messages: [initialMessage, firstUserMessage, assistantMessage],
+        updatedAt: Date.now(),
+      }
+
+      const updatedRounds = newRounds.map((r) =>
+        r.id === roundId ? updatedRound : r
+      )
+      await persistRounds(updatedRounds)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
       setIsLoading(false)
     }
-  }, [hasConfig, config])
+  }
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+    if (!input.trim() || isLoading || !activeRound) return
 
     const userMessage: Message = {
       id: generateId(),
@@ -310,14 +471,26 @@ function SidePanel() {
       visible: true
     }
 
-    const newMessages = [...messages, userMessage]
-    setMessages(newMessages)
+    const shouldComplete = isSummaryRequest(input.trim())
+    const currentRound = activeRound
+    const messagesAfterUser = [...currentRound.messages, userMessage]
+    const roundAfterUser: ConversationRound = {
+      ...currentRound,
+      messages: messagesAfterUser,
+      updatedAt: Date.now(),
+    }
+    const roundsAfterUser = rounds.map((r) =>
+      r.id === currentRound.id ? roundAfterUser : r
+    )
+
+    setRounds(roundsAfterUser)
     setInput("")
     setIsLoading(true)
     setErrorMessage(null)
+    if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
     try {
-      const response = await callOpenAI(newMessages)
+      const response = await callOpenAI(messagesAfterUser)
       const assistantMessage: Message = {
         id: generateId(),
         role: "assistant",
@@ -325,7 +498,18 @@ function SidePanel() {
         timestamp: Date.now(),
         visible: true
       }
-      setMessages([...newMessages, assistantMessage])
+
+      const messagesAfterAI = [...messagesAfterUser, assistantMessage]
+      const roundAfterAI: ConversationRound = {
+        ...roundAfterUser,
+        messages: messagesAfterAI,
+        completed: shouldComplete,
+        updatedAt: Date.now(),
+      }
+      const roundsAfterAI = roundsAfterUser.map((r) =>
+        r.id === currentRound.id ? roundAfterAI : r
+      )
+      await persistRounds(roundsAfterAI)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -334,7 +518,7 @@ function SidePanel() {
   }
 
   const handleSummarize = async () => {
-    if (isLoading || messages.length === 0) return
+    if (isLoading || !activeRound || activeRound.messages.length === 0) return
 
     const userActionMessage: Message = {
       id: generateId(),
@@ -352,13 +536,24 @@ function SidePanel() {
       visible: false
     }
 
-    const messagesWithUserAction = [...messages, userActionMessage]
-    const messagesForAI = [...messages, internalInstruction]
-    setMessages(messagesWithUserAction)
+    const currentRound = activeRound
+    const messagesWithUserAction = [...currentRound.messages, userActionMessage]
+    const roundAfterUser: ConversationRound = {
+      ...currentRound,
+      messages: messagesWithUserAction,
+      updatedAt: Date.now(),
+    }
+    const roundsAfterUser = rounds.map((r) =>
+      r.id === currentRound.id ? roundAfterUser : r
+    )
+
+    setRounds(roundsAfterUser)
     setIsLoading(true)
     setErrorMessage(null)
+    if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
     try {
+      const messagesForAI = [...currentRound.messages, internalInstruction]
       const response = await callOpenAI(messagesForAI)
       const assistantMessage: Message = {
         id: generateId(),
@@ -367,7 +562,18 @@ function SidePanel() {
         timestamp: Date.now(),
         visible: true
       }
-      setMessages([...messagesWithUserAction, assistantMessage])
+
+      const messagesAfterAI = [...messagesWithUserAction, assistantMessage]
+      const roundAfterAI: ConversationRound = {
+        ...roundAfterUser,
+        messages: messagesAfterAI,
+        completed: true,
+        updatedAt: Date.now(),
+      }
+      const roundsAfterAI = roundsAfterUser.map((r) =>
+        r.id === currentRound.id ? roundAfterAI : r
+      )
+      await persistRounds(roundsAfterAI)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -382,17 +588,32 @@ function SidePanel() {
     }
   }
 
-  const clearConversation = () => {
-    setMessages([])
-    setConversationStarted(false)
+  const handleNewConversation = () => {
+    setViewingRoundId(null)
+    setActiveRoundId(null)
+    setErrorMessage(null)
+    setInput("")
+  }
+
+  const handleSwitchRound = (roundId: string) => {
+    setViewingRoundId(roundId)
+    setHistoryExpanded(false)
+  }
+
+  const handleContinueRound = (roundId: string) => {
+    setActiveRoundId(roundId)
+    setViewingRoundId(null)
     setErrorMessage(null)
   }
 
-  const displayMessages = messages.filter(m => m.visible)
+  const handleBackToActive = () => {
+    setViewingRoundId(null)
+  }
+
+  const reversedRounds = useMemo(() => [...rounds].reverse(), [rounds])
 
   return (
     <div className="flex flex-col h-full bg-notion-bg text-notion-text transition-colors duration-300">
-      {/* 头部：导师感与极简功能 */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-notion-border bg-notion-bg/80 backdrop-blur-md sticky top-0 z-20 gap-2">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="w-8 h-8 bg-notion-accent rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm shadow-notion-accent/20">
@@ -404,40 +625,106 @@ function SidePanel() {
             <h1 className="text-sm font-bold tracking-tight truncate">苏格拉底</h1>
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse flex-shrink-0" />
-              <span className="text-[10px] font-medium text-notion-text-secondary truncate">在线思辨中</span>
+              <span className="text-[10px] font-medium text-notion-text-secondary truncate">
+                {isViewingHistory ? "查看历史对话" : "在线思辨中"}
+              </span>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
-          {conversationStarted && (
-            <>
-              <button
-                onClick={handleSummarize}
-                disabled={isLoading}
-                className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-30"
-                title="总结当前对话"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                </svg>
-              </button>
-              <button
-                onClick={clearConversation}
-                className="p-1.5 text-notion-text-secondary hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
-                title="开启新对话"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-            </>
+          {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
+            <button
+              onClick={handleSummarize}
+              disabled={isLoading}
+              className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-30"
+              title="总结当前对话"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+            </button>
+          )}
+          {rounds.length > 0 && (
+            <button
+              onClick={() => setHistoryExpanded(!historyExpanded)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                historyExpanded
+                  ? "bg-notion-accent/10 text-notion-accent"
+                  : "text-notion-text-secondary hover:bg-notion-hover"
+              }`}
+              title="历史对话"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
+          )}
+          {conversationStarted && !isViewingHistory && (
+            <button
+              onClick={handleNewConversation}
+              className="p-1.5 text-notion-text-secondary hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+              title="开启新对话"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
           )}
         </div>
       </header>
 
-      {/* 内容区 */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {!conversationStarted ? (
+        {historyExpanded && rounds.length > 0 && (
+          <div className="border-b border-notion-border bg-notion-bg-secondary/50">
+            <div className="p-3 space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
+              {reversedRounds.map((round, index) => (
+                <button
+                  key={round.id}
+                  onClick={() => handleSwitchRound(round.id)}
+                  className={`w-full px-3 py-2 rounded-lg transition-colors flex items-center justify-between text-left ${
+                    round.id === (viewingRoundId || activeRoundId)
+                      ? "bg-notion-accent/10 text-notion-accent"
+                      : "hover:bg-notion-hover text-notion-text"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-medium truncate">
+                      第 {rounds.length - index} 轮
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-[10px] text-notion-text-secondary">
+                      {formatTime(round.createdAt)}
+                    </span>
+                    {round.completed ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400">
+                        已完成
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-notion-accent/10 text-notion-accent">
+                        进行中
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {isViewingHistory && (
+          <div className="px-4 py-2 bg-notion-bg-secondary border-b border-notion-border flex items-center justify-between">
+            <span className="text-xs text-notion-text-secondary">查看历史对话</span>
+            <button
+              onClick={handleBackToActive}
+              className="text-xs text-notion-accent hover:text-notion-accent-hover font-medium transition-colors"
+            >
+              返回当前
+            </button>
+          </div>
+        )}
+
+        {!conversationStarted && !isViewingHistory ? (
           <div className="flex flex-col items-center justify-center min-h-full px-8 py-12 text-center">
             <div className="w-20 h-20 bg-notion-bg-secondary rounded-2xl flex items-center justify-center mb-8 border border-notion-border/50 relative group">
               <div className="absolute inset-0 bg-notion-accent opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity" />
@@ -458,6 +745,15 @@ function SidePanel() {
               {isLoading ? "正在读取心智..." : "开始阅读引导"}
               <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
             </button>
+
+            {latestIncompleteRound && latestIncompleteRound.id !== activeRoundId && (
+              <button
+                onClick={() => handleContinueRound(latestIncompleteRound.id)}
+                className="mt-3 px-10 py-3 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl font-medium hover:bg-notion-hover transition-all"
+              >
+                继续上次对话
+              </button>
+            )}
 
             {!hasConfig && (
               <p className="mt-8 text-xs text-notion-text-secondary flex items-center gap-1.5 opacity-60">
@@ -521,13 +817,22 @@ function SidePanel() {
                 </div>
               </div>
             )}
+            {isRoundCompleted && !isViewingHistory && (
+              <div className="flex justify-center py-2">
+                <div className="flex items-center gap-2 px-4 py-2 bg-notion-bg-secondary rounded-xl border border-notion-border/50">
+                  <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-xs text-notion-text-secondary">本轮对话已完成</span>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
-      {/* 输入区：Notion 风格命令感 */}
-      {conversationStarted && (
+      {conversationStarted && !isRoundCompleted && !isViewingHistory && (
         <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
           <div className="relative flex items-end gap-2 bg-notion-bg-secondary rounded-2xl border border-notion-border p-2 focus-within:border-notion-accent/50 focus-within:ring-4 focus-within:ring-notion-accent/5 transition-all">
             <textarea
@@ -558,6 +863,39 @@ function SidePanel() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
               </svg>
             </button>
+          </div>
+        </div>
+      )}
+
+      {conversationStarted && isRoundCompleted && !isViewingHistory && (
+        <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+          <button
+            onClick={handleNewConversation}
+            className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95"
+          >
+            开启新一轮对话
+          </button>
+        </div>
+      )}
+
+      {isViewingHistory && !isRoundCompleted && viewingRound && (
+        <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+          <button
+            onClick={() => handleContinueRound(viewingRound.id)}
+            className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95"
+          >
+            继续此轮对话
+          </button>
+        </div>
+      )}
+
+      {isViewingHistory && isRoundCompleted && (
+        <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+          <div className="flex items-center justify-center gap-2 py-2">
+            <svg className="w-4 h-4 text-notion-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="text-xs text-notion-text-secondary">此轮对话已完成</span>
           </div>
         </div>
       )}
