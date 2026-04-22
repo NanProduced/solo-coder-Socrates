@@ -403,427 +403,260 @@ function SidePanel() {
     }
   }
 
-  // 检测页面类型
-  const detectPageType = (): "html" | "pdf" | "text" => {
-    // 检查是否是 PDF 查看器页面
-    if (document.contentType === "application/pdf" || 
-        window.location.href.endsWith(".pdf") ||
-        document.querySelector("embed[type='application/pdf']") ||
-        document.querySelector("object[type='application/pdf']")) {
-      return "pdf"
-    }
-    
-    // 检查是否是纯文本页面
-    if (document.contentType === "text/plain") {
-      return "text"
-    }
-    
-    return "html"
+  // 消息类型定义（与 Content Script 中的定义一致）
+  interface ExtractContentRequest {
+    action: "extractContent"
   }
 
-  // 清理 HTML 内容中的噪音
-  const cleanHtmlContent = (doc: Document): Document => {
-    const clone = doc.cloneNode(true) as Document
-    
-    const noiseSelectors = [
-      "script", "style", "noscript", "iframe",
-      "nav", "header", "footer", "aside",
-      ".ad", ".ads", ".advertisement", ".advertising",
-      ".banner", ".sidebar", ".widget",
-      ".comments", ".comment-section",
-      ".social", ".share", ".like",
-      ".related", ".recommended", ".trending",
-      ".cookie", ".gdpr", ".consent",
-      ".popup", ".modal", ".overlay",
-      "#ad", "#ads", "#advertisement",
-      "#sidebar", "#widget",
-      "[role='banner']", "[role='complementary']",
-      "[data-ad]", "[class*='ad-']",
-      "[id*='ad-']",
-    ]
-    
-    noiseSelectors.forEach(selector => {
-      try {
-        const elements = clone.querySelectorAll(selector)
-        elements.forEach(el => el.remove())
-      } catch (e) {
-        // 忽略无效选择器
-      }
-    })
-    
-    // 移除空的段落和容器
-    const emptyElements = clone.querySelectorAll("p:empty, div:empty, span:empty")
-    emptyElements.forEach(el => {
-      if (el.textContent?.trim() === "") {
-        el.remove()
-      }
-    })
-    
-    return clone
+  interface ExtractContentResponse {
+    success: boolean
+    title?: string
+    content?: string
+    url?: string
+    contentType?: "html" | "pdf" | "text"
+    isTruncated?: boolean
+    summary?: string
+    error?: string
   }
 
-  // 备用提取方法
-  const extractWithFallback = (doc: Document): { title: string; content: string } => {
-    const title = doc.title || ""
-    
-    const mainSelectors = [
-      "main", "article", "[role='main']",
-      ".post", ".article", ".content", "#content",
-      ".post-content", ".article-content", ".entry-content",
-      "[class*='content']", "[id*='content']",
-    ]
-    
-    let mainContent = ""
-    
-    for (const selector of mainSelectors) {
-      try {
-        const element = doc.querySelector(selector)
-        const textContent = element?.textContent ?? ""
-        if (element && textContent.trim().length > 500) {
-          mainContent = textContent
-          break
+  // 带超时的消息发送
+  const sendMessageWithTimeout = (
+    tabId: number,
+    message: ExtractContentRequest,
+    timeout: number = 5000
+  ): Promise<ExtractContentResponse> => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Message timeout"))
+      }, timeout)
+
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        clearTimeout(timeoutId)
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message))
+        } else {
+          resolve(response)
         }
-      } catch (e) {
-        continue
-      }
+      })
+    })
+  }
+
+  // 动态注入 Content Script
+  const injectContentScript = async (tabId: number): Promise<boolean> => {
+    try {
+      // Plasmo 会将 contents/content-extractor.ts 打包为 content-extractor.js
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["content-extractor.js"]
+      })
+      // 等待脚本初始化
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return true
+    } catch (e) {
+      console.error("Failed to inject content script:", e)
+      return false
     }
-    
-    // 如果没有找到主要内容区域，收集所有段落
-    if (!mainContent) {
-      const paragraphs = doc.querySelectorAll("p")
-      const texts: string[] = []
-      let totalLength = 0
-      
-      paragraphs.forEach((p) => {
-        const text = p.textContent?.trim() || ""
-        if (text.length > 50) {
-          texts.push(text)
-          totalLength += text.length
-          if (texts.length >= 50 || totalLength >= 20000) {
-            return
+  }
+
+  // 使用 pdf.js 解析 PDF（在扩展上下文中执行）
+  const parsePdfWithPdfJs = async (tabId: number): Promise<{ title: string; content: string; url: string } | null> => {
+    try {
+      // 首先获取 PDF 的 URL 和基本信息
+      const urlResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          return {
+            url: window.location.href,
+            title: document.title || "PDF Document",
+            isPdf: document.contentType === "application/pdf" || window.location.href.endsWith(".pdf")
           }
         }
       })
-      
-      mainContent = texts.join("\n\n")
+
+      if (!urlResults?.[0]?.result?.isPdf) {
+        return null
+      }
+
+      const { url, title } = urlResults[0].result
+
+      // 尝试在页面上下文中获取 PDF 数据（携带 cookie）
+      const pdfDataResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async () => {
+          try {
+            const response = await fetch(window.location.href, {
+              credentials: 'include',
+              mode: 'cors'
+            })
+
+            if (response.ok) {
+              const arrayBuffer = await response.arrayBuffer()
+              const uint8Array = new Uint8Array(arrayBuffer)
+              let binary = ''
+              for (let i = 0; i < uint8Array.byteLength; i++) {
+                binary += String.fromCharCode(uint8Array[i])
+              }
+              return {
+                success: true,
+                data: btoa(binary)
+              }
+            }
+          } catch (e) {
+            console.error("Fetch PDF failed:", e)
+          }
+          return { success: false }
+        }
+      })
+
+      if (pdfDataResults?.[0]?.result?.success) {
+        try {
+          // 动态导入 pdf.js
+          const pdfjsLib = await import('pdfjs-dist')
+
+          // 设置 worker
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+          // 解码 base64 数据
+          const base64Data = pdfDataResults[0].result.data ?? ""
+          const binaryString = atob(base64Data)
+          const uint8Array = new Uint8Array(binaryString.length)
+          for (let i = 0; i < binaryString.length; i++) {
+            uint8Array[i] = binaryString.charCodeAt(i)
+          }
+
+          // 加载 PDF 文档
+          const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise
+
+          // 提取所有页面的文本
+          const fullText: string[] = []
+          const numPages = pdf.numPages
+
+          for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum)
+            const textContent = await page.getTextContent()
+
+            const pageText: string[] = []
+            let lastY = 0
+            let lastFontSize = 0
+
+            textContent.items.forEach((item: any) => {
+              // 检测换行（基于 Y 坐标变化或字体大小变化）
+              if (Math.abs(item.transform[5] - lastY) > 5 ||
+                  (item.height && Math.abs(item.height - lastFontSize) > 2)) {
+                pageText.push('\n')
+              }
+              pageText.push(item.str)
+              lastY = item.transform[5]
+              if (item.height) lastFontSize = item.height
+            })
+
+            fullText.push(`--- 第 ${pageNum} 页 ---\n${pageText.join(' ')}`)
+          }
+
+          return {
+            title,
+            content: fullText.join('\n\n'),
+            url
+          }
+        } catch (pdfError) {
+          console.error("PDF 解析失败:", pdfError)
+        }
+      }
+    } catch (e) {
+      console.error("Failed to parse PDF with pdf.js:", e)
     }
-    
-    // 如果还是没有内容，使用整个 body
-    if (!mainContent || mainContent.trim().length < 100) {
-      mainContent = doc.body.textContent || ""
-    }
-    
-    return { title, content: mainContent }
+
+    return null
   }
 
   const getPageContent = async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (tab.id) {
-        // 首先检测页面类型
-        const typeResults = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: detectPageType
-        })
+      if (!tab.id) {
+        return { title: "", content: "", url: "", isTruncated: false, contentType: "html" as const }
+      }
 
-        const pageType = typeResults?.[0]?.result || "html"
+      // 首选方案：使用消息通信与 Content Script 交互
+      // Content Script 真正导入和使用 @mozilla/readability
+      try {
+        const response = await sendMessageWithTimeout(tab.id, { action: "extractContent" })
 
-        // 根据页面类型选择不同的提取策略
-        if (pageType === "pdf") {
-          // PDF 页面需要特殊处理
-          // 首先尝试从页面 DOM 中提取文本（适用于某些 PDF 查看器）
-          const pdfDomResults = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              const url = window.location.href
-              const title = document.title || "PDF Document"
-              
-              // 尝试从不同类型的 PDF 查看器中提取文本
-              let content = ""
-              
-              // 1. 尝试查找文本层（许多现代 PDF 查看器使用）
-              const textLayers = document.querySelectorAll('[class*="textLayer"], [id*="textLayer"]')
-              if (textLayers.length > 0) {
-                const texts: string[] = []
-                textLayers.forEach(layer => {
-                  const text = layer.textContent?.trim() || ""
-                  if (text.length > 0) {
-                    texts.push(text)
-                  }
-                })
-                content = texts.join("\n\n")
-              }
-              
-              // 2. 尝试查找 canvas 旁边的隐藏文本（某些查看器的做法）
-              if (!content) {
-                const hiddenTexts = document.querySelectorAll('span[style*="hidden"], div[style*="hidden"]')
-                const texts: string[] = []
-                hiddenTexts.forEach(el => {
-                  const text = el.textContent?.trim() || ""
-                  if (text.length > 20) {
-                    texts.push(text)
-                  }
-                })
-                if (texts.length > 0) {
-                  content = texts.join("\n\n")
-                }
-              }
-              
-              // 3. 尝试从 body 中提取所有文本（备用方案）
-              if (!content) {
-                content = document.body.textContent || ""
-              }
-              
-              // 4. 检查是否可以通过 fetch 获取 PDF 原始数据
-              // 这需要在页面上下文中执行，以携带 cookie
-              let canFetchPdf = false
-              const pdfUrl = url
-              if (pdfUrl.endsWith('.pdf') || document.contentType === 'application/pdf') {
-                canFetchPdf = true
-              }
-              
+        if (response.success) {
+          // 如果是 PDF 且内容很少，尝试使用 pdf.js 解析
+          if (response.contentType === "pdf" && (!response.content || response.content.length < 1000)) {
+            const pdfResult = await parsePdfWithPdfJs(tab.id)
+            if (pdfResult) {
+              const truncationResult = smartTruncate(pdfResult.title, pdfResult.content)
               return {
-                title,
-                content,
-                url,
-                contentType: "pdf",
-                canFetchPdf,
-                pdfUrl
-              }
-            }
-          })
-
-          let finalPdfContent = ""
-          let pdfTitle = ""
-          let pdfUrl = ""
-          
-          if (pdfDomResults && pdfDomResults[0]?.result) {
-            const result = pdfDomResults[0].result as any
-            pdfTitle = result.title
-            pdfUrl = result.url
-            finalPdfContent = result.content
-            
-            // 如果 DOM 提取的内容很少，尝试使用 pdf.js 解析
-            if (result.canFetchPdf && result.content.length < 1000) {
-              try {
-                // 尝试在页面上下文中注入 pdf.js 并提取文本
-                // 注意：这是一个复杂的操作，我们先尝试简单的方法
-                
-                // 方法 1：尝试使用 fetch 获取 PDF 数据并转换为 base64
-                const pdfDataResults = await chrome.scripting.executeScript({
-                  target: { tabId: tab.id },
-                  func: async () => {
-                    const url = window.location.href
-                    try {
-                      // 尝试获取 PDF 的 ArrayBuffer
-                      const response = await fetch(url, {
-                        credentials: 'include', // 携带 cookie
-                        mode: 'cors'
-                      })
-                      
-                      if (response.ok) {
-                        const arrayBuffer = await response.arrayBuffer()
-                        // 转换为 base64 以便传递
-                        const uint8Array = new Uint8Array(arrayBuffer)
-                        let binary = ''
-                        for (let i = 0; i < uint8Array.byteLength; i++) {
-                          binary += String.fromCharCode(uint8Array[i])
-                        }
-                        const base64 = btoa(binary)
-                        return {
-                          success: true,
-                          data: base64,
-                          url
-                        }
-                      }
-                    } catch (e) {
-                      // fetch 可能因为 CORS 失败
-                    }
-                    return { success: false, url }
-                  }
-                })
-                
-                if (pdfDataResults && pdfDataResults[0]?.result?.success) {
-                  // 有了 PDF 数据，现在需要在扩展上下文中使用 pdf.js 解析
-                  try {
-                    // 动态导入 pdf.js
-                    const pdfjsLib = await import('pdfjs-dist')
-                    
-                    // 设置 worker
-                    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-                    
-                    // 解码 base64 数据
-                    const base64Data = pdfDataResults[0].result.data ?? ""
-                    const binaryString = atob(base64Data)
-                    const uint8Array = new Uint8Array(binaryString.length)
-                    for (let i = 0; i < binaryString.length; i++) {
-                      uint8Array[i] = binaryString.charCodeAt(i)
-                    }
-                    
-                    // 加载 PDF 文档
-                    const pdf = await pdfjsLib.getDocument({ data: uint8Array }).promise
-                    
-                    // 提取所有页面的文本
-                    const fullText: string[] = []
-                    const numPages = pdf.numPages
-                    
-                    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-                      const page = await pdf.getPage(pageNum)
-                      const textContent = await page.getTextContent()
-                      
-                      const pageText: string[] = []
-                      let lastY = 0
-                      let lastFontSize = 0
-                      
-                      textContent.items.forEach((item: any) => {
-                        // 检测换行（基于 Y 坐标变化或字体大小变化）
-                        if (Math.abs(item.transform[5] - lastY) > 5 || 
-                            (item.height && Math.abs(item.height - lastFontSize) > 2)) {
-                          pageText.push('\n')
-                        }
-                        pageText.push(item.str)
-                        lastY = item.transform[5]
-                        if (item.height) lastFontSize = item.height
-                      })
-                      
-                      fullText.push(`--- 第 ${pageNum} 页 ---\n${pageText.join(' ')}`)
-                    }
-                    
-                    finalPdfContent = fullText.join('\n\n')
-                  } catch (pdfError) {
-                    console.error("PDF 解析失败:", pdfError)
-                    // 如果 pdf.js 解析失败，继续使用之前的内容
-                  }
-                }
-              } catch (fetchError) {
-                console.error("获取 PDF 数据失败:", fetchError)
+                title: pdfResult.title,
+                content: truncationResult.truncatedContent,
+                url: pdfResult.url,
+                isTruncated: truncationResult.isTruncated,
+                summary: truncationResult.summary,
+                contentType: "pdf"
               }
             }
           }
-          
-          // 应用智能截断
-          const truncationResult = smartTruncate(pdfTitle, finalPdfContent)
+
           return {
-            title: pdfTitle,
-            content: truncationResult.truncatedContent,
-            url: pdfUrl,
-            isTruncated: truncationResult.isTruncated,
-            summary: truncationResult.summary,
-            contentType: "pdf"
+            title: response.title || "",
+            content: response.content || "",
+            url: response.url || "",
+            isTruncated: response.isTruncated || false,
+            summary: response.summary,
+            contentType: response.contentType || "html"
           }
         } else {
-          // HTML 或文本页面，使用增强的提取逻辑
-          const htmlResults = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-              // 内联 Readability 简化版功能
-              // 由于 chrome.scripting.executeScript 无法直接使用导入的模块，
-              // 我们实现一个简化版的内容提取逻辑
-              
-              const cleanHtmlContent = (doc: Document): Document => {
-                const clone = doc.cloneNode(true) as Document
-                
-                const noiseSelectors = [
-                  "script", "style", "noscript", "iframe",
-                  "nav", "header", "footer", "aside",
-                  ".ad", ".ads", ".advertisement", ".advertising",
-                  ".banner", ".sidebar", ".widget",
-                  ".comments", ".comment-section",
-                  ".social", ".share", ".like",
-                  ".related", ".recommended", ".trending",
-                  ".cookie", ".gdpr", ".consent",
-                  ".popup", ".modal", ".overlay",
-                ]
-                
-                noiseSelectors.forEach(selector => {
-                  try {
-                    const elements = clone.querySelectorAll(selector)
-                    elements.forEach(el => el.remove())
-                  } catch (e) {}
-                })
-                
-                return clone
+          console.error("Content script extraction failed:", response.error)
+        }
+      } catch (messageError) {
+        console.log("Message communication failed, trying dynamic injection:", messageError)
+
+        // 消息通信失败，尝试动态注入 Content Script
+        const injected = await injectContentScript(tab.id)
+        if (injected) {
+          try {
+            const response = await sendMessageWithTimeout(tab.id, { action: "extractContent" })
+
+            if (response.success) {
+              // 如果是 PDF 且内容很少，尝试使用 pdf.js 解析
+              if (response.contentType === "pdf" && (!response.content || response.content.length < 1000)) {
+                const pdfResult = await parsePdfWithPdfJs(tab.id)
+                if (pdfResult) {
+                  const truncationResult = smartTruncate(pdfResult.title, pdfResult.content)
+                  return {
+                    title: pdfResult.title,
+                    content: truncationResult.truncatedContent,
+                    url: pdfResult.url,
+                    isTruncated: truncationResult.isTruncated,
+                    summary: truncationResult.summary,
+                    contentType: "pdf"
+                  }
+                }
               }
 
-              const extractMainContent = (doc: Document): { title: string; content: string } => {
-                const title = doc.title || ""
-                
-                // 尝试使用 Readability 风格的提取
-                // 1. 清理文档
-                const cleanedDoc = cleanHtmlContent(doc)
-                
-                // 2. 尝试查找主要内容区域
-                const mainSelectors = [
-                  "main", "article", "[role='main']",
-                  ".post", ".article", ".content", "#content",
-                  ".post-content", ".article-content", ".entry-content",
-                ]
-                
-                let mainContent = ""
-                
-                for (const selector of mainSelectors) {
-                  try {
-                    const element = cleanedDoc.querySelector(selector)
-                    const textContent = element?.textContent ?? ""
-                    if (element && textContent.trim().length > 500) {
-                      mainContent = textContent
-                      break
-                    }
-                  } catch (e) {}
-                }
-                
-                // 3. 如果没有找到，收集所有有意义的段落
-                if (!mainContent || mainContent.trim().length < 100) {
-                  const paragraphs = cleanedDoc.querySelectorAll("p")
-                  const texts: string[] = []
-                  
-                  paragraphs.forEach((p) => {
-                    const text = p.textContent?.trim() || ""
-                    if (text.length > 30) {
-                      texts.push(text)
-                    }
-                  })
-                  
-                  mainContent = texts.join("\n\n")
-                }
-                
-                // 4. 最终备用方案
-                if (!mainContent || mainContent.trim().length < 100) {
-                  mainContent = cleanedDoc.body.textContent || ""
-                }
-                
-                return { title, content: mainContent }
-              }
-
-              // 执行提取
-              const result = extractMainContent(document)
               return {
-                title: result.title,
-                content: result.content,
-                url: window.location.href,
-                contentType: "html"
+                title: response.title || "",
+                content: response.content || "",
+                url: response.url || "",
+                isTruncated: response.isTruncated || false,
+                summary: response.summary,
+                contentType: response.contentType || "html"
               }
             }
-          })
-
-          if (htmlResults && htmlResults[0]?.result) {
-            const result = htmlResults[0].result as { title: string; content: string; url: string; contentType: string }
-            const truncationResult = smartTruncate(result.title, result.content)
-            return {
-              title: result.title,
-              content: truncationResult.truncatedContent,
-              url: result.url,
-              isTruncated: truncationResult.isTruncated,
-              summary: truncationResult.summary,
-              contentType: result.contentType
-            }
+          } catch (injectedMessageError) {
+            console.error("Dynamic injection also failed:", injectedMessageError)
           }
         }
       }
+
+      // 所有方案都失败，返回空结果
+      console.warn("All content extraction methods failed")
+      return { title: "", content: "", url: "", isTruncated: false, contentType: "html" as const }
     } catch (error) {
       console.error("Failed to get page content:", error)
+      return { title: "", content: "", url: "", isTruncated: false, contentType: "html" as const }
     }
-    return { title: "", content: "", url: "", isTruncated: false, contentType: "html" as const }
   }
 
   const callOpenAI = async (msgs: Message[]): Promise<string> => {
