@@ -391,171 +391,128 @@ function SidePanel() {
   const displayMessages = messages.filter(m => m.visible)
 
   return (
-    <div className="flex flex-col h-full bg-[#fcfcfc]">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[#eaeaea] bg-white">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-[#2eaadc] to-[#1c96c5] rounded-lg flex items-center justify-center shadow-sm">
+    <div className="flex flex-col h-full bg-notion-bg text-notion-text transition-colors duration-300">
+      {/* 头部：导师感与极简功能 */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-notion-border bg-notion-bg/80 backdrop-blur-md sticky top-0 z-20 gap-2">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="w-8 h-8 bg-notion-accent rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm shadow-notion-accent/20">
             <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5h8M9 5v14m6-14v14M6 19h12" />
             </svg>
           </div>
-          <div>
-            <h1 className="text-[15px] font-semibold text-[#37352f]">苏格拉底</h1>
-            <p className="text-xs text-[#787774]">阅读助手</p>
+          <div className="min-w-0">
+            <h1 className="text-sm font-bold tracking-tight truncate">苏格拉底</h1>
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse flex-shrink-0" />
+              <span className="text-[10px] font-medium text-notion-text-secondary truncate">在线思辨中</span>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
           {conversationStarted && (
-            <button
-              onClick={handleSummarize}
-              disabled={isLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f7f6f3] text-[#37352f] rounded-lg hover:bg-[#2eaadc] hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-              title="总结对话"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-              </svg>
-              <span className="hidden sm:inline">总结</span>
-            </button>
-          )}
-          {conversationStarted && (
-            <button
-              onClick={clearConversation}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#f7f6f3] text-[#37352f] rounded-lg hover:bg-[#ef4444] hover:text-white transition-all text-sm font-medium"
-              title="新对话"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              <span className="hidden sm:inline">新对话</span>
-            </button>
+            <>
+              <button
+                onClick={handleSummarize}
+                disabled={isLoading}
+                className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-30"
+                title="总结当前对话"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                </svg>
+              </button>
+              <button
+                onClick={clearConversation}
+                className="p-1.5 text-notion-text-secondary hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
+                title="开启新对话"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+            </>
           )}
         </div>
-      </div>
+      </header>
 
+      {/* 内容区 */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {!conversationStarted ? (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="w-20 h-20 bg-gradient-to-br from-[#e8f4f8] to-[#d0e8f0] rounded-2xl flex items-center justify-center mb-6 shadow-inner">
-              <svg className="w-10 h-10 text-[#2eaadc]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          <div className="flex flex-col items-center justify-center min-h-full px-8 py-12 text-center">
+            <div className="w-20 h-20 bg-notion-bg-secondary rounded-2xl flex items-center justify-center mb-8 border border-notion-border/50 relative group">
+              <div className="absolute inset-0 bg-notion-accent opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity" />
+              <svg className="w-10 h-10 text-notion-accent/40 group-hover:text-notion-accent transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
             </div>
-            <h2 className="text-xl font-semibold text-[#37352f] mb-2">
-              苏格拉底式阅读
-            </h2>
-            <p className="text-sm text-[#787774] mb-8 max-w-xs leading-relaxed">
-              通过连续提问，引导你主动思考，真正理解文档的核心内容
+            <h2 className="text-xl font-bold tracking-tight mb-3">不审视的人生不值得过</h2>
+            <p className="text-sm text-notion-text-secondary leading-relaxed mb-10 opacity-80">
+              导师苏格拉底已准备好引导你深入理解此文档。他不会直接给你答案，但会启发你的智慧。
             </p>
 
             <button
               onClick={startConversation}
               disabled={isLoading}
-              className="px-8 py-3 bg-gradient-to-r from-[#2eaadc] to-[#1c96c5] text-white rounded-xl font-medium hover:from-[#1c96c5] hover:to-[#1580a8] transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed text-base"
+              className="group relative px-10 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
             >
-              {isLoading ? (
-                <span className="flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  分析页面中...
-                </span>
-              ) : "开始对话"}
+              {isLoading ? "正在读取心智..." : "开始阅读引导"}
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
             </button>
 
             {!hasConfig && (
-              <div className="mt-6 px-4 py-3 bg-[#fff8e6] border border-[#ffe0b2] rounded-lg">
-                <p className="text-xs text-[#e65100] flex items-center gap-1.5">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  请先在设置中配置 API 参数
-                </p>
-              </div>
-            )}
-
-            {errorMessage && (
-              <div className="mt-6 px-4 py-3 bg-[#ffebee] border border-[#ffcdd2] rounded-lg max-w-xs">
-                <p className="text-xs text-[#c62828]">
-                  错误: {errorMessage}
-                </p>
-              </div>
+              <p className="mt-8 text-xs text-notion-text-secondary flex items-center gap-1.5 opacity-60">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                需在设置中配置 API 密钥
+              </p>
             )}
           </div>
         ) : (
-          <div className="p-5 space-y-6">
-            {displayMessages.length === 0 && isLoading ? (
-              <div className="flex justify-center py-8">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          <div className="p-5 space-y-8 pb-32">
+            {displayMessages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
+              >
+                <div className={`flex gap-3 max-w-[95%] ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
+                  <div className={`w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center border shadow-sm ${
+                    message.role === "assistant" 
+                      ? "bg-notion-bg-secondary border-notion-border text-notion-accent" 
+                      : "bg-notion-text border-notion-text text-white"
+                  }`}>
+                    {message.role === "assistant" ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5h8M9 5v14m6-14v14" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    )}
                   </div>
-                  <p className="text-xs text-[#787774]">正在分析页面内容...</p>
+                  <div className={`px-4 py-2.5 rounded-2xl ${
+                    message.role === "user"
+                      ? "bg-notion-accent text-white shadow-md shadow-notion-accent/10"
+                      : "bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm"
+                  }`}>
+                    <MarkdownMessage content={message.content} isUser={message.role === "user"} />
+                  </div>
                 </div>
               </div>
-            ) : (
-              <>
-                {displayMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div className="flex items-end gap-2 max-w-[90%]">
-                      {message.role === "assistant" && (
-                        <div className="w-7 h-7 bg-gradient-to-br from-[#2eaadc] to-[#1c96c5] rounded-full flex-shrink-0 flex items-center justify-center shadow-sm">
-                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                          </svg>
-                        </div>
-                      )}
-                      <div
-                        className={`px-4 py-3 ${
-                          message.role === "user"
-                            ? "bg-gradient-to-r from-[#2eaadc] to-[#1c96c5] text-white rounded-t-2xl rounded-bl-2xl shadow-md"
-                            : "bg-white text-[#37352f] rounded-t-2xl rounded-br-2xl shadow-sm border border-[#eaeaea]"
-                        }`}
-                      >
-                        <MarkdownMessage content={message.content} isUser={message.role === "user"} />
-                      </div>
-                      {message.role === "user" && (
-                        <div className="w-7 h-7 bg-[#37352f] rounded-full flex-shrink-0 flex items-center justify-center shadow-sm">
-                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
+            ))}
+            {isLoading && (
+              <div className="flex gap-3">
+                <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-notion-accent rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-1 h-1 bg-notion-accent rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
                   </div>
-                ))}
-
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="flex items-end gap-2">
-                      <div className="w-7 h-7 bg-gradient-to-br from-[#2eaadc] to-[#1c96c5] rounded-full flex-shrink-0 flex items-center justify-center shadow-sm">
-                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                        </svg>
-                      </div>
-                      <div className="bg-white text-[#37352f] rounded-t-2xl rounded-br-2xl px-4 py-3 shadow-sm border border-[#eaeaea]">
-                        <div className="flex items-center gap-1.5 py-0.5">
-                          <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <div className="w-2 h-2 bg-[#2eaadc] rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
+                </div>
+              </div>
             )}
-
             {errorMessage && (
               <div className="flex justify-center">
-                <div className="px-4 py-3 bg-[#ffebee] border border-[#ffcdd2] rounded-xl max-w-xs">
-                  <p className="text-sm text-[#c62828] flex items-center gap-2">
+                <div className="px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-xl max-w-xs">
+                  <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
                     <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -564,40 +521,37 @@ function SidePanel() {
                 </div>
               </div>
             )}
-
             <div ref={messagesEndRef} />
           </div>
         )}
       </div>
 
+      {/* 输入区：Notion 风格命令感 */}
       {conversationStarted && (
-        <div className="border-t border-[#eaeaea] bg-white p-4">
-          <div className="flex items-end gap-2">
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="输入你的回答..."
-                rows={1}
-                disabled={isLoading}
-                className="w-full resize-none px-4 py-3 bg-[#f7f6f3] border-2 border-transparent rounded-2xl text-sm text-[#37352f] placeholder-[#a9a8a5] focus:outline-none focus:border-[#2eaadc] focus:bg-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ minHeight: "44px", maxHeight: "140px" }}
-                onInput={(e) => {
-                  const target = e.target as HTMLTextAreaElement
-                  target.style.height = "auto"
-                  target.style.height = Math.min(target.scrollHeight, 140) + "px"
-                }}
-              />
-            </div>
+        <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+          <div className="relative flex items-end gap-2 bg-notion-bg-secondary rounded-2xl border border-notion-border p-2 focus-within:border-notion-accent/50 focus-within:ring-4 focus-within:ring-notion-accent/5 transition-all">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="回复导师的问题..."
+              rows={1}
+              className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 px-3 resize-none min-h-[40px] max-h-32 scrollbar-none"
+              style={{ height: "auto" }}
+              onInput={(e) => {
+                const target = e.target as HTMLTextAreaElement
+                target.style.height = "auto"
+                target.style.height = target.scrollHeight + "px"
+              }}
+            />
             <button
               onClick={handleSend}
               disabled={!input.trim() || isLoading}
-              className={`p-3 rounded-2xl transition-all shadow-sm flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center ${
+              className={`p-2 rounded-xl transition-all ${
                 input.trim() && !isLoading
-                  ? "bg-gradient-to-r from-[#2eaadc] to-[#1c96c5] text-white hover:from-[#1c96c5] hover:to-[#1580a8] shadow-md"
-                  : "bg-[#f7f6f3] text-[#a9a8a5] cursor-not-allowed"
+                  ? "bg-notion-accent text-white shadow-lg shadow-notion-accent/20"
+                  : "bg-notion-bg text-notion-text-secondary opacity-30"
               }`}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -605,9 +559,6 @@ function SidePanel() {
               </svg>
             </button>
           </div>
-          <p className="mt-2 text-xs text-[#a9a8a5] text-center">
-            按 <kbd className="px-1.5 py-0.5 bg-[#f7f6f3] rounded text-xs mx-0.5">Enter</kbd> 发送，<kbd className="px-1.5 py-0.5 bg-[#f7f6f3] rounded text-xs mx-0.5">Shift+Enter</kbd> 换行
-          </p>
         </div>
       )}
     </div>

@@ -5,14 +5,31 @@ import "./style.css"
 
 function IndexPopup() {
   const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
-
   const [hasConfig, setHasConfig] = useState(false)
+  const [pageStatus, setPageStatus] = useState<"analyzing" | "ready" | "unsupported">("analyzing")
 
   useEffect(() => {
     if (config) {
       setHasConfig(!!config.apiKey && !!config.baseURL)
     }
   }, [config])
+
+  useEffect(() => {
+    // 快速检测页面是否可读
+    const checkPage = async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+        if (tab?.url?.startsWith("http")) {
+          setPageStatus("ready")
+        } else {
+          setPageStatus("unsupported")
+        }
+      } catch {
+        setPageStatus("unsupported")
+      }
+    }
+    checkPage()
+  }, [])
 
   const openSidePanel = async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -26,52 +43,62 @@ function IndexPopup() {
   }
 
   return (
-    <div className="w-72 bg-notion-bg p-4">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 bg-notion-accent rounded-lg flex items-center justify-center">
-          <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+    <div className="w-80 bg-notion-bg p-5 transition-colors duration-300">
+      <div className="flex items-center gap-4 mb-6">
+        {/* 古典风格图标容器 */}
+        <div className="relative w-12 h-12 bg-notion-bg-secondary rounded-xl flex items-center justify-center border border-notion-border shadow-sm">
+          <svg className="w-7 h-7 text-notion-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+             {/* 极简希腊柱体/智慧象征 */}
+             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 5h8M9 5v14m6-14v14M6 19h12M7 5a1 1 0 011-1h8a1 1 0 011 1v0a1 1 0 01-1 1H8a1 1 0 01-1-1v0z" />
           </svg>
+          <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-white dark:bg-notion-bg rounded-full border border-notion-border flex items-center justify-center">
+            <div className={`w-2 h-2 rounded-full ${pageStatus === 'ready' ? 'bg-green-500' : 'bg-notion-text-secondary opacity-50'}`} />
+          </div>
         </div>
         <div>
-          <h1 className="text-lg font-semibold text-notion-text">苏格拉底</h1>
-          <p className="text-xs text-notion-text-secondary">阅读助手</p>
+          <h1 className="text-[17px] font-bold text-notion-text tracking-tight">苏格拉底</h1>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-notion-text-secondary font-semibold">思辨阅读 · 智识启发</p>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {hasConfig ? (
-          <>
-            <p className="text-sm text-notion-text-secondary mb-3">
-              打开侧边栏，开始苏格拉底式深度阅读
-            </p>
-            <button
-              onClick={openSidePanel}
-              className="w-full px-4 py-2.5 bg-notion-accent text-white rounded-md font-medium hover:bg-notion-accent-hover transition-colors"
-            >
-              打开侧边栏
-            </button>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-notion-text-secondary mb-3">
-              请先配置 AI 服务参数
-            </p>
+      <div className="space-y-4">
+        <div className="px-4 py-3 bg-notion-bg-secondary rounded-xl border border-notion-border/50">
+          {pageStatus === "ready" ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-notion-text font-medium">页面已就绪，导师已入座。</span>
+            </div>
+          ) : pageStatus === "unsupported" ? (
+            <span className="text-xs text-notion-text-secondary italic">此页面不支持深度阅读模式。</span>
+          ) : (
+            <span className="text-xs text-notion-text-secondary animate-pulse">正在感应页面内容...</span>
+          )}
+        </div>
+
+        <div className="pt-2">
+          {hasConfig ? (
+            <div className="space-y-2">
+              <button
+                onClick={openSidePanel}
+                className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-md shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-[0.98]"
+              >
+                开启智慧对话
+              </button>
+              <button
+                onClick={openOptions}
+                className="w-full px-4 py-2.5 text-notion-text-secondary text-[13px] font-medium hover:bg-notion-hover rounded-lg transition-colors border border-transparent hover:border-notion-border"
+              >
+                偏好设置
+              </button>
+            </div>
+          ) : (
             <button
               onClick={openOptions}
-              className="w-full px-4 py-2.5 bg-notion-accent text-white rounded-md font-medium hover:bg-notion-accent-hover transition-colors"
+              className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-md shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-[0.98]"
             >
-              配置参数
+              配置 AI 模型密钥
             </button>
-          </>
-        )}
-
-        <button
-          onClick={openOptions}
-          className="w-full px-4 py-2 text-notion-text-secondary text-sm hover:bg-notion-hover rounded-md transition-colors"
-        >
-          设置
-        </button>
+          )}
+        </div>
       </div>
     </div>
   )

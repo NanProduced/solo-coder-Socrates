@@ -15,12 +15,12 @@ module.exports = {
       },
       colors: {
         'notion': {
-          'bg': '#ffffff',
-          'bg-secondary': '#f7f6f3',
-          'text': '#37352f',
-          'text-secondary': '#787774',
-          'border': '#e3e2e0',
-          'hover': '#f7f6f3',
+          'bg': 'var(--notion-bg, #ffffff)',
+          'bg-secondary': 'var(--notion-bg-secondary, #f7f6f3)',
+          'text': 'var(--notion-text, #37352f)',
+          'text-secondary': 'var(--notion-text-secondary, #787774)',
+          'border': 'var(--notion-border, #e3e2e0)',
+          'hover': 'var(--notion-hover, #f7f6f3)',
           'accent': '#2eaadc',
           'accent-hover': '#1c96c5',
         }

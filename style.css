@@ -3,6 +3,26 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --notion-bg: #ffffff;
+    --notion-bg-secondary: #f7f6f3;
+    --notion-text: #37352f;
+    --notion-text-secondary: #787774;
+    --notion-border: #e3e2e0;
+    --notion-hover: #f7f6f3;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --notion-bg: #191919;
+      --notion-bg-secondary: #202020;
+      --notion-text: #efefef;
+      --notion-text-secondary: #919191;
+      --notion-border: #2f2f2f;
+      --notion-hover: #2f2f2f;
+    }
+  }
+
   body {
     @apply font-sans text-notion-text bg-notion-bg;
   }
