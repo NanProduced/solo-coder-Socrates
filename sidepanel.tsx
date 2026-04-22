@@ -168,7 +168,7 @@ function SidePanel() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const [currentPageId, setCurrentPageId] = useState<string | null>(null)
-  const [currentPageInfo, setCurrentPageInfo] = useState<{ title: string; url: string }>({ title: "", url: "" })
+  const [currentPageInfo, setCurrentPageInfo] = useState<{ title: string; url: string; content: string }>({ title: "", url: "", content: "" })
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("welcome")
   const [historyList, setHistoryList] = useState<Conversation[]>([])
@@ -237,7 +237,7 @@ function SidePanel() {
 
     const pageId = generatePageId(pageInfo.url)
     setCurrentPageId(pageId)
-    setCurrentPageInfo({ title: pageInfo.title, url: pageInfo.url })
+    setCurrentPageInfo({ title: pageInfo.title, url: pageInfo.url, content: pageInfo.content })
 
     await updatePageInfo(pageId, pageInfo.title, pageInfo.url)
 
