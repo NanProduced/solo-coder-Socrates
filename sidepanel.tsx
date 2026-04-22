@@ -511,8 +511,9 @@ function SidePanel() {
           // 动态导入 pdf.js
           const pdfjsLib = await import('pdfjs-dist')
 
-          // 设置 worker - 使用打包到扩展中的本地 worker
-          // worker 文件通过 web_accessible_resources 配置
+          // 设置 worker - 使用从 node_modules 导入的 worker
+          // Plasmo 会自动将 node_modules/pdfjs-dist/build/pdf.worker.min.mjs 复制到构建目录的根目录
+          // 文件名是 pdf.worker.min.mjs，通过 web_accessible_resources 配置
           const workerUrl = chrome.runtime.getURL('pdf.worker.min.mjs')
           pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -1753,36 +1754,63 @@ function SidePanel() {
                           <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                             <span className="text-xs font-bold text-notion-accent">1</span>
                           </div>
-                          <p className="text-sm text-notion-text-secondary">
-                            点击下面的按钮打开扩展管理页面
-                          </p>
+                          <div>
+                            <p className="text-sm text-notion-text-secondary">
+                              点击浏览器工具栏中的扩展图标（拼图图标）
+                            </p>
+                            <p className="text-xs text-notion-text-secondary/70 mt-1">
+                              或在地址栏输入 chrome://extensions/ 并回车
+                            </p>
+                          </div>
                         </div>
                         <div className="flex items-start gap-3">
                           <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                             <span className="text-xs font-bold text-notion-accent">2</span>
                           </div>
                           <p className="text-sm text-notion-text-secondary">
-                            找到「允许此扩展读取和更改您在所有网站上的所有数据」选项
+                            找到「苏格拉底式阅读助手」扩展，点击「详情」
                           </p>
                         </div>
                         <div className="flex items-start gap-3">
                           <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
                             <span className="text-xs font-bold text-notion-accent">3</span>
                           </div>
-                          <p className="text-sm text-notion-text-secondary">
-                            选择「在所有网站上」或「在特定网站上」（file:// 协议）
-                          </p>
+                          <div>
+                            <p className="text-sm text-notion-text-secondary">
+                              找到「允许此扩展读取和更改您在所有网站上的所有数据」
+                            </p>
+                            <p className="text-xs text-notion-text-secondary/70 mt-1">
+                              选择「在所有网站上」
+                            </p>
+                          </div>
                         </div>
                       </div>
                       
-                      <button
-                        onClick={() => {
-                          chrome.runtime.openOptionsPage()
-                        }}
-                        className="w-full px-4 py-2.5 bg-notion-accent text-white rounded-xl font-medium hover:bg-notion-accent-hover transition-all active:scale-95"
-                      >
-                        打开扩展管理页面
-                      </button>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await chrome.tabs.create({ url: 'chrome://extensions/' })
+                            } catch {
+                              try {
+                                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+                                if (tab?.id) {
+                                  await chrome.tabs.update(tab.id, { url: 'chrome://extensions/' })
+                                }
+                              } catch {
+                                console.error('无法打开扩展管理页面，请手动输入 chrome://extensions/')
+                              }
+                            }
+                          }}
+                          className="flex-1 px-4 py-2.5 bg-notion-accent text-white rounded-xl font-medium hover:bg-notion-accent-hover transition-all active:scale-95"
+                        >
+                          打开扩展管理页面
+                        </button>
+                      </div>
+                      
+                      <p className="text-xs text-notion-text-secondary/60 mt-3 text-center">
+                        如按钮无效，请手动在地址栏输入 chrome://extensions/
+                      </p>
                     </div>
                     
                     <button

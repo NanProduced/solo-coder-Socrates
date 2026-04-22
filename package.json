@@ -43,7 +43,7 @@
     "web_accessible_resources": [
       {
         "resources": [
-          "pdf.worker.min.mjs"
+          "pdfjs-dist/build/pdf.worker.min.mjs"
         ],
         "matches": [
           "<all_urls>"
