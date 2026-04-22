@@ -196,6 +196,12 @@ function SidePanel() {
   const [pageTitle, setPageTitle] = useState("")
   const [pageUrl, setPageUrl] = useState("")
 
+  // 新增状态：用于用户体验改进
+  const [isExtractingContent, setIsExtractingContent] = useState(false)
+  const [showFilePermissionGuide, setShowFilePermissionGuide] = useState(false)
+  const [isLocalFile, setIsLocalFile] = useState(false)
+  const [extractionProgress, setExtractionProgress] = useState<string>("")
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -505,9 +511,10 @@ function SidePanel() {
           // 动态导入 pdf.js
           const pdfjsLib = await import('pdfjs-dist')
 
-          // 设置 worker - 使用与安装版本匹配的 CDN worker
-          // pdfjs-dist v5.x 的 worker 路径
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+          // 设置 worker - 使用打包到扩展中的本地 worker
+          // worker 文件通过 web_accessible_resources 配置
+          const workerUrl = chrome.runtime.getURL('pdf.worker.min.mjs')
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
           // 解码 base64 数据
           const base64Data = pdfDataResults[0].result.data ?? ""
@@ -948,7 +955,12 @@ function SidePanel() {
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.url || !tab.url.startsWith("http")) {
+      
+      // 检测是否是本地文件
+      const isLocal = tab?.url?.startsWith("file://") || false
+      setIsLocalFile(isLocal)
+      
+      if (!tab?.url || (!tab.url.startsWith("http") && !isLocal)) {
         setPageKey("")
         setRounds([])
         setActiveRoundId(null)
@@ -1114,17 +1126,33 @@ function SidePanel() {
       return
     }
 
+    // 对于本地文件，先检查是否有权限访问
+    if (isLocalFile) {
+      setExtractionProgress("正在检查文件访问权限...")
+    }
+
     setIsLoading(true)
+    setIsExtractingContent(true)
     setErrorMessage(null)
 
     try {
+      setExtractionProgress("正在提取页面内容...")
       const pageInfo = await getPageContent()
 
       // 检查内容提取是否成功
       if (!pageInfo.success) {
-        const errorMessage = pageInfo.error || "无法从页面中提取内容"
+        let errorMessage = pageInfo.error || "无法从页面中提取内容"
+        
+        // 对于本地文件，提供更详细的错误信息和引导
+        if (isLocalFile) {
+          setShowFilePermissionGuide(true)
+          errorMessage = "无法访问本地文件。请确保已开启扩展的文件访问权限。"
+        }
+        
         setErrorMessage(errorMessage)
         setIsLoading(false)
+        setIsExtractingContent(false)
+        setExtractionProgress("")
         return
       }
 
@@ -1132,8 +1160,12 @@ function SidePanel() {
       if (!pageInfo.content || pageInfo.content.trim().length < 50) {
         setErrorMessage("页面内容太少，无法进行有效的阅读对话。请确保页面有足够的文本内容。")
         setIsLoading(false)
+        setIsExtractingContent(false)
+        setExtractionProgress("")
         return
       }
+
+      setExtractionProgress("正在处理内容...")
 
       // 根据内容类型设置初始提示
       let contextPrompt = ""
@@ -1222,6 +1254,8 @@ function SidePanel() {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
       setIsLoading(false)
+      setIsExtractingContent(false)
+      setExtractionProgress("")
     }
   }
 
@@ -1694,40 +1728,123 @@ function SidePanel() {
 
             {!conversationStarted && !isViewingHistory ? (
               <div className="flex flex-col items-center justify-center min-h-full px-8 py-12 text-center">
-                <div className="w-20 h-20 bg-notion-bg-secondary rounded-2xl flex items-center justify-center mb-8 border border-notion-border/50 relative group">
-                  <div className="absolute inset-0 bg-notion-accent opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity" />
-                  <svg className="w-10 h-10 text-notion-accent/40 group-hover:text-notion-accent transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-bold tracking-tight mb-3">不审视的人生不值得过</h2>
-                <p className="text-sm text-notion-text-secondary leading-relaxed mb-10 opacity-80">
-                  导师苏格拉底已准备好引导你深入理解此文档。他不会直接给你答案，但会启发你的智慧。
-                </p>
+                
+                {showFilePermissionGuide ? (
+                  <div className="w-full max-w-sm">
+                    <div className="bg-notion-bg-secondary border border-notion-border rounded-2xl p-6 text-left">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-base font-bold text-notion-text">需要文件访问权限</h3>
+                        <button
+                          onClick={() => setShowFilePermissionGuide(false)}
+                          className="p-1 hover:bg-notion-hover rounded-lg transition-colors"
+                        >
+                          <svg className="w-4 h-4 text-notion-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      
+                      <p className="text-sm text-notion-text-secondary mb-6 leading-relaxed">
+                        为了让苏格拉底导师能够读取您的本地 PDF 和 HTML 文件，您需要为扩展开启文件访问权限。
+                      </p>
+                      
+                      <div className="space-y-4 mb-6">
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <span className="text-xs font-bold text-notion-accent">1</span>
+                          </div>
+                          <p className="text-sm text-notion-text-secondary">
+                            点击下面的按钮打开扩展管理页面
+                          </p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <span className="text-xs font-bold text-notion-accent">2</span>
+                          </div>
+                          <p className="text-sm text-notion-text-secondary">
+                            找到「允许此扩展读取和更改您在所有网站上的所有数据」选项
+                          </p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="w-6 h-6 rounded-full bg-notion-accent/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <span className="text-xs font-bold text-notion-accent">3</span>
+                          </div>
+                          <p className="text-sm text-notion-text-secondary">
+                            选择「在所有网站上」或「在特定网站上」（file:// 协议）
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <button
+                        onClick={() => {
+                          chrome.runtime.openOptionsPage()
+                        }}
+                        className="w-full px-4 py-2.5 bg-notion-accent text-white rounded-xl font-medium hover:bg-notion-accent-hover transition-all active:scale-95"
+                      >
+                        打开扩展管理页面
+                      </button>
+                    </div>
+                    
+                    <button
+                      onClick={() => setShowFilePermissionGuide(false)}
+                      className="w-full mt-4 px-4 py-2 text-sm text-notion-text-secondary hover:text-notion-text transition-colors"
+                    >
+                      稍后再说
+                    </button>
+                  </div>
+                ) : isExtractingContent ? (
+                  <div className="flex flex-col items-center">
+                    <div className="w-20 h-20 bg-notion-bg-secondary rounded-2xl flex items-center justify-center mb-6 border border-notion-border/50">
+                      <div className="relative">
+                        <div className="w-10 h-10 border-4 border-notion-accent/20 rounded-full" />
+                        <div className="absolute top-0 left-0 w-10 h-10 border-4 border-notion-accent border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    </div>
+                    <h3 className="text-lg font-bold text-notion-text mb-2">
+                      {extractionProgress || "正在提取页面内容..."}
+                    </h3>
+                    <p className="text-sm text-notion-text-secondary opacity-80">
+                      请稍候，导师正在阅读此文档
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="w-20 h-20 bg-notion-bg-secondary rounded-2xl flex items-center justify-center mb-8 border border-notion-border/50 relative group">
+                      <div className="absolute inset-0 bg-notion-accent opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity" />
+                      <svg className="w-10 h-10 text-notion-accent/40 group-hover:text-notion-accent transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                      </svg>
+                    </div>
+                    <h2 className="text-xl font-bold tracking-tight mb-3">不审视的人生不值得过</h2>
+                    <p className="text-sm text-notion-text-secondary leading-relaxed mb-10 opacity-80">
+                      导师苏格拉底已准备好引导你深入理解此文档。他不会直接给你答案，但会启发你的智慧。
+                    </p>
 
-                <button
-                  onClick={startConversation}
-                  disabled={isLoading}
-                  className="group relative px-10 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {isLoading ? "正在读取心智..." : "开始阅读引导"}
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
-                </button>
+                    <button
+                      onClick={startConversation}
+                      disabled={isLoading}
+                      className="group relative px-10 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      {isLoading ? "正在读取心智..." : "开始阅读引导"}
+                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
+                    </button>
 
-                {latestIncompleteRound && latestIncompleteRound.id !== activeRoundId && (
-                  <button
-                    onClick={() => handleContinueRound(latestIncompleteRound.id)}
-                    className="mt-3 px-10 py-3 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl font-medium hover:bg-notion-hover transition-all"
-                  >
-                    继续上次对话
-                  </button>
-                )}
+                    {latestIncompleteRound && latestIncompleteRound.id !== activeRoundId && (
+                      <button
+                        onClick={() => handleContinueRound(latestIncompleteRound.id)}
+                        className="mt-3 px-10 py-3 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl font-medium hover:bg-notion-hover transition-all"
+                      >
+                        继续上次对话
+                      </button>
+                    )}
 
-                {!hasConfig && (
-                  <p className="mt-8 text-xs text-notion-text-secondary flex items-center gap-1.5 opacity-60">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                    需在设置中配置 API 密钥
-                  </p>
+                    {!hasConfig && (
+                      <p className="mt-8 text-xs text-notion-text-secondary flex items-center gap-1.5 opacity-60">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                        需在设置中配置 API 密钥
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             ) : (
@@ -1775,13 +1892,36 @@ function SidePanel() {
                 )}
                 {errorMessage && (
                   <div className="flex justify-center">
-                    <div className="px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-xl max-w-xs">
-                      <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
-                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        {errorMessage}
-                      </p>
+                    <div className="flex flex-col gap-3 px-4 py-3 bg-notion-bg-secondary border border-notion-border rounded-xl max-w-sm w-full">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2">
+                          <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <p className="text-sm text-notion-text leading-relaxed">
+                            {errorMessage}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setErrorMessage(null)}
+                          className="p-1 hover:bg-notion-hover rounded-lg transition-colors flex-shrink-0"
+                        >
+                          <svg className="w-4 h-4 text-notion-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      
+                      {showFilePermissionGuide && (
+                        <button
+                          onClick={() => {
+                            chrome.runtime.openOptionsPage()
+                          }}
+                          className="w-full px-3 py-2 bg-notion-accent text-white rounded-lg text-sm font-medium hover:bg-notion-accent-hover transition-all"
+                        >
+                          前往设置权限
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
