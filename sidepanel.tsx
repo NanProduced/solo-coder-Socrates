@@ -166,6 +166,7 @@ function SidePanel() {
   const [isLoading, setIsLoading] = useState(false)
   const [hasConfig, setHasConfig] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [warningMessage, setWarningMessage] = useState<string | null>(null)
 
   const [currentPageId, setCurrentPageId] = useState<string | null>(null)
   const [currentPageInfo, setCurrentPageInfo] = useState<{ title: string; url: string; content: string }>({ title: "", url: "", content: "" })
@@ -334,9 +335,13 @@ function SidePanel() {
 
     setIsLoading(true)
     setErrorMessage(null)
+    setWarningMessage(null)
+
+    let aiResponse: string | null = null
+    let pageInfo: { title: string; url: string; content: string }
 
     try {
-      const pageInfo = currentPageInfo.url ? currentPageInfo : await getPageContent()
+      pageInfo = currentPageInfo.url ? currentPageInfo : await getPageContent()
 
       let contextPrompt = "用户正在浏览一个网页。"
 
@@ -369,7 +374,7 @@ function SidePanel() {
         visible: false
       }
 
-      const aiResponse = await callOpenAI([initialMessage, firstUserMessage])
+      aiResponse = await callOpenAI([initialMessage, firstUserMessage])
 
       const assistantMessage: Message = {
         id: generateId(),
@@ -381,16 +386,38 @@ function SidePanel() {
 
       const allMessages = [initialMessage, firstUserMessage, assistantMessage]
 
-      const conversation = await createConversation(
-        currentPageId,
-        pageInfo.title,
-        pageInfo.url,
-        allMessages
-      )
+      const optimisticConversation: Conversation = {
+        id: generateId(),
+        pageId: currentPageId,
+        pageTitle: pageInfo.title,
+        pageUrl: pageInfo.url,
+        messages: allMessages,
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastMessagePreview: assistantMessage.content.slice(0, 100),
+      }
 
-      setCurrentConversation(conversation)
+      setCurrentConversation(optimisticConversation)
       setMessages(allMessages)
       setViewMode("active-conversation")
+      setIsLoading(false)
+
+      ;(async () => {
+        try {
+          await createConversation(
+            currentPageId,
+            pageInfo.title,
+            pageInfo.url,
+            allMessages
+          )
+        } catch (storageError) {
+          console.error("保存对话到历史记录失败:", storageError)
+          setWarningMessage(`对话已开始，但保存到历史记录时失败: ${storageError instanceof Error ? storageError.message : "未知错误"}`)
+        }
+      })()
+
+      return
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -414,10 +441,18 @@ function SidePanel() {
     setInput("")
     setIsLoading(true)
     setErrorMessage(null)
+    setWarningMessage(null)
+
+    ;(async () => {
+      try {
+        await addMessageToConversation(currentPageId!, currentConversation.id, userMessage)
+      } catch (storageError) {
+        console.error("保存用户消息失败:", storageError)
+        setWarningMessage(`消息发送成功，但保存到历史记录时失败: ${storageError instanceof Error ? storageError.message : "未知错误"}`)
+      }
+    })()
 
     try {
-      await addMessageToConversation(currentPageId!, currentConversation.id, userMessage)
-
       const response = await callOpenAI(newMessages)
       const assistantMessage: Message = {
         id: generateId(),
@@ -430,14 +465,21 @@ function SidePanel() {
       const updatedMessages = [...newMessages, assistantMessage]
       setMessages(updatedMessages)
       
-      await addMessageToConversation(currentPageId!, currentConversation.id, assistantMessage)
-      
       setCurrentConversation(prev => prev ? {
         ...prev,
         messages: updatedMessages,
         updatedAt: Date.now(),
         lastMessagePreview: assistantMessage.content.slice(0, 100)
       } : null)
+
+      ;(async () => {
+        try {
+          await addMessageToConversation(currentPageId!, currentConversation.id, assistantMessage)
+        } catch (storageError) {
+          console.error("保存助手消息失败:", storageError)
+          setWarningMessage(`回复已收到，但保存到历史记录时失败: ${storageError instanceof Error ? storageError.message : "未知错误"}`)
+        }
+      })()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -469,10 +511,18 @@ function SidePanel() {
     setMessages(messagesWithUserAction)
     setIsLoading(true)
     setErrorMessage(null)
+    setWarningMessage(null)
+
+    ;(async () => {
+      try {
+        await addMessageToConversation(currentPageId, currentConversation.id, userActionMessage)
+      } catch (storageError) {
+        console.error("保存总结请求失败:", storageError)
+        setWarningMessage(`请求已发送，但保存到历史记录时失败: ${storageError instanceof Error ? storageError.message : "未知错误"}`)
+      }
+    })()
 
     try {
-      await addMessageToConversation(currentPageId, currentConversation.id, userActionMessage)
-
       const response = await callOpenAI(messagesForAI)
       const assistantMessage: Message = {
         id: generateId(),
@@ -485,9 +535,6 @@ function SidePanel() {
       const finalMessages = [...messagesWithUserAction, assistantMessage]
       setMessages(finalMessages)
 
-      await addMessagesToConversation(currentPageId, currentConversation.id, [assistantMessage])
-      await updateConversationStatus(currentPageId, currentConversation.id, "completed")
-
       setCurrentConversation(prev => prev ? {
         ...prev,
         messages: finalMessages,
@@ -497,6 +544,19 @@ function SidePanel() {
       } : null)
 
       setViewMode("completed-conversation")
+      setIsLoading(false)
+
+      ;(async () => {
+        try {
+          await addMessagesToConversation(currentPageId, currentConversation.id, [assistantMessage])
+          await updateConversationStatus(currentPageId, currentConversation.id, "completed")
+        } catch (storageError) {
+          console.error("保存总结结果失败:", storageError)
+          setWarningMessage(`总结已完成，但保存到历史记录时失败: ${storageError instanceof Error ? storageError.message : "未知错误"}`)
+        }
+      })()
+
+      return
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -509,6 +569,7 @@ function SidePanel() {
     setMessages([])
     setViewMode("welcome")
     setErrorMessage(null)
+    setWarningMessage(null)
   }
 
   const switchToHistoryList = async () => {
@@ -704,18 +765,6 @@ function SidePanel() {
             </div>
           </div>
         )}
-        {errorMessage && (
-          <div className="flex justify-center">
-            <div className="px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-xl max-w-xs">
-              <p className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
-                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {errorMessage}
-              </p>
-            </div>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -839,6 +888,43 @@ function SidePanel() {
           )}
         </div>
       </header>
+
+      {(errorMessage || warningMessage) && (
+        <div className="px-4 py-2 border-b border-notion-border bg-notion-bg/95">
+          {errorMessage && (
+            <div className="flex justify-center mb-2 last:mb-0">
+              <div className="px-3 py-2 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg w-full">
+                <p className="text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{errorMessage}</span>
+                </p>
+              </div>
+            </div>
+          )}
+          {warningMessage && (
+            <div className="flex justify-center last:mb-0">
+              <div className="px-3 py-2 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-lg w-full">
+                <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                  <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span>{warningMessage}</span>
+                  <button
+                    onClick={() => setWarningMessage(null)}
+                    className="ml-auto flex-shrink-0 text-amber-500 hover:text-amber-700"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {viewMode === "welcome" && renderWelcome()}
