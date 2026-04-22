@@ -1,19 +1,10 @@
 import { useState, useEffect } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
+import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
 import "./style.css"
 
-interface OpenAIConfig {
-  baseURL: string
-  apiKey: string
-  model: string
-}
-
 function IndexPopup() {
-  const [config] = useStorage<OpenAIConfig>("openai-config", {
-    baseURL: "",
-    apiKey: "",
-    model: ""
-  })
+  const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
 
   const [hasConfig, setHasConfig] = useState(false)
 

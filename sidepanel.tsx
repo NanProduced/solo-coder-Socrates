@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
+import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
 import "./style.css"
 
 interface Message {
@@ -8,12 +9,6 @@ interface Message {
   content: string
   timestamp: number
   visible: boolean
-}
-
-interface OpenAIConfig {
-  baseURL: string
-  apiKey: string
-  model: string
 }
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
@@ -53,65 +48,83 @@ const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和
 - "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
 - "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
 
+const escapeHtml = (text: string): string => {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+const stripThinkTags = (content: string): string => {
+  return content
+    .replace(/<think[\s\S]*?<\/think>/g, "")
+    .replace(/<think[\s\S]*$/g, "")
+    .trim()
+}
+
 const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
   const renderedHTML = useMemo(() => {
     let html = content
-    
+
     const codeBlocks: string[] = []
     html = html.replace(/```(\w+)?\s*\n([\s\S]*?)\n```/g, (match, lang, code) => {
-      codeBlocks.push(code)
+      codeBlocks.push(escapeHtml(code))
       return `__CODE_BLOCK_${codeBlocks.length - 1}__`
     })
-    
+
     const inlineCodes: string[] = []
     html = html.replace(/`([^`]+)`/g, (match, code) => {
-      inlineCodes.push(code)
+      inlineCodes.push(escapeHtml(code))
       return `__INLINE_CODE_${inlineCodes.length - 1}__`
     })
-    
+
+    html = escapeHtml(html)
+
     html = html.replace(/^#\s+(.+)$/gm, '<h1 class="text-lg font-bold mb-3 mt-4">$1</h1>')
     html = html.replace(/^##\s+(.+)$/gm, '<h2 class="text-base font-bold mb-2 mt-3">$1</h2>')
     html = html.replace(/^###\s+(.+)$/gm, '<h3 class="text-sm font-bold mb-2 mt-2">$1</h3>')
-    
+
     html = html.replace(/^[-*+]\s+(.+)$/gm, '<li class="text-sm">$1</li>')
     html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul class="list-disc pl-4 mb-2 space-y-1">$&</ul>')
-    
+
     html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="text-sm">$1</li>')
     html = html.replace(/(<li.*<\/li>\n?)+/g, (match) => {
       if (match.includes('class="list-disc')) return match
       return `<ol class="list-decimal pl-4 mb-2 space-y-1">${match}</ol>`
     })
-    
+
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="font-bold">$1</strong>')
     html = html.replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
-    
-    html = html.replace(/^>\s+(.+)$/gm, (match, text) => {
+
+    html = html.replace(/^&gt;\s+(.+)$/gm, (match, text) => {
       return `<blockquote class="border-l-4 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
     })
-    
+
     html = html.replace(/\n\n/g, '</p><p class="mb-2 last:mb-0">')
     html = html.replace(/\n/g, '<br/>')
-    
+
     if (html && !html.startsWith('<')) {
       html = '<p class="mb-2 last:mb-0">' + html + '</p>'
     }
-    
+
     html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
       const code = inlineCodes[parseInt(index)]
       const bgClass = isUser ? 'bg-white/20' : 'bg-gray-100 text-gray-800'
       return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
     })
-    
+
     html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
       const code = codeBlocks[parseInt(index)]
       return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-gray-50 text-gray-800 text-xs font-mono overflow-x-auto">${code}</code></pre>`
     })
-    
+
     return html
   }, [content, isUser])
 
   return (
-    <div 
+    <div
       className="text-sm leading-relaxed"
       dangerouslySetInnerHTML={{ __html: renderedHTML }}
     />
@@ -119,16 +132,10 @@ const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean
 }
 
 function SidePanel() {
-  const [config] = useStorage<OpenAIConfig>("openai-config", {
-    baseURL: "",
-    apiKey: "",
-    model: ""
-  })
-
+  const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [pageContent, setPageContent] = useState("")
   const [hasConfig, setHasConfig] = useState(false)
   const [conversationStarted, setConversationStarted] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -155,23 +162,23 @@ function SidePanel() {
           func: () => {
             let title = document.title || ""
             let content = ""
-            
+
             const mainContent = document.querySelector('main, article, [role="main"], .post, .article, #content')
             if (mainContent) {
-              content = mainContent.innerText
+              content = (mainContent as HTMLElement).innerText
             } else {
               const paragraphs = document.querySelectorAll('p')
               if (paragraphs.length > 3) {
                 const texts: string[] = []
                 paragraphs.forEach((p, i) => {
-                  if (i < 20) texts.push(p.innerText)
+                  if (i < 20) texts.push((p as HTMLElement).innerText)
                 })
                 content = texts.join("\n\n")
               } else {
                 content = document.body.innerText
               }
             }
-            
+
             return {
               title: title.slice(0, 200),
               content: content.slice(0, 6000),
@@ -190,23 +197,7 @@ function SidePanel() {
     return { title: "", content: "", url: "" }
   }
 
-  const generateId = () => Date.now().toString() + Math.random().toString(36).substr(2, 9)
-
-  const stripThinkTags = (content: string): string => {
-    let result = content
-    const thinkPattern = /<think>[\s\S]*?<\/think>/g
-    result = result.replace(thinkPattern, "")
-    
-    let lastResult
-    do {
-      lastResult = result
-      result = result
-        .replace(/^<think[\s\S]*$/, "")
-        .replace(/^[\s\S]*?<\/think>/, "")
-    } while (result !== lastResult)
-    
-    return result.trim()
-  }
+  const generateId = () => Date.now().toString() + Math.random().toString(36).slice(2, 11)
 
   const callOpenAI = async (messages: Message[]): Promise<string> => {
     if (!config.apiKey || !config.baseURL) {
@@ -240,9 +231,9 @@ function SidePanel() {
 
     const data = await response.json()
     let content = data.choices[0]?.message?.content || ""
-    
+
     content = stripThinkTags(content)
-    
+
     return content
   }
 
@@ -254,14 +245,12 @@ function SidePanel() {
 
     setIsLoading(true)
     setErrorMessage(null)
-    setConversationStarted(true)
 
     try {
       const pageInfo = await getPageContent()
-      setPageContent(pageInfo.content)
 
       let contextPrompt = "用户正在浏览一个网页。"
-      
+
       if (pageInfo.title) {
         contextPrompt += `\n\n网页标题：${pageInfo.title}`
       }
@@ -302,6 +291,7 @@ function SidePanel() {
       }
 
       setMessages([initialMessage, firstUserMessage, assistantMessage])
+      setConversationStarted(true)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -362,12 +352,13 @@ function SidePanel() {
       visible: false
     }
 
-    setMessages([...messages, userActionMessage])
+    const messagesWithUserAction = [...messages, userActionMessage]
+    const messagesForAI = [...messages, internalInstruction]
+    setMessages(messagesWithUserAction)
     setIsLoading(true)
     setErrorMessage(null)
 
     try {
-      const messagesForAI = [...messages, internalInstruction]
       const response = await callOpenAI(messagesForAI)
       const assistantMessage: Message = {
         id: generateId(),
@@ -376,7 +367,7 @@ function SidePanel() {
         timestamp: Date.now(),
         visible: true
       }
-      setMessages([...messages, userActionMessage, assistantMessage])
+      setMessages([...messagesWithUserAction, assistantMessage])
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "未知错误")
     } finally {
@@ -456,7 +447,7 @@ function SidePanel() {
             <p className="text-sm text-[#787774] mb-8 max-w-xs leading-relaxed">
               通过连续提问，引导你主动思考，真正理解文档的核心内容
             </p>
-            
+
             <button
               onClick={startConversation}
               disabled={isLoading}
@@ -472,7 +463,7 @@ function SidePanel() {
                 </span>
               ) : "开始对话"}
             </button>
-            
+
             {!hasConfig && (
               <div className="mt-6 px-4 py-3 bg-[#fff8e6] border border-[#ffe0b2] rounded-lg">
                 <p className="text-xs text-[#e65100] flex items-center gap-1.5">
@@ -539,7 +530,7 @@ function SidePanel() {
                     </div>
                   </div>
                 ))}
-                
+
                 {isLoading && (
                   <div className="flex justify-start">
                     <div className="flex items-end gap-2">
@@ -573,7 +564,7 @@ function SidePanel() {
                 </div>
               </div>
             )}
-            
+
             <div ref={messagesEndRef} />
           </div>
         )}

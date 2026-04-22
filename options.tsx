@@ -1,23 +1,15 @@
 import { useState, useEffect } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
-
-interface OpenAIConfig {
-  baseURL: string
-  apiKey: string
-  model: string
-}
+import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
 
 function OptionsPage() {
-  const [config, setConfig] = useStorage<OpenAIConfig>("openai-config", {
-    baseURL: "https://api.openai.com/v1",
-    apiKey: "",
-    model: "gpt-4o"
-  })
+  const [config, setConfig] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
 
   const [baseURL, setBaseURL] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [model, setModel] = useState("")
   const [saved, setSaved] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
 
   useEffect(() => {
     if (config) {
@@ -28,10 +20,38 @@ function OptionsPage() {
   }, [config])
 
   const handleSave = () => {
+    setValidationError(null)
+
+    const trimmedBaseURL = baseURL.trim()
+    const trimmedApiKey = apiKey.trim()
+    const trimmedModel = model.trim()
+
+    if (!trimmedBaseURL) {
+      setValidationError("请填写 API 地址")
+      return
+    }
+
+    try {
+      new URL(trimmedBaseURL)
+    } catch {
+      setValidationError("API 地址格式不正确，请输入有效的 URL")
+      return
+    }
+
+    if (!trimmedApiKey) {
+      setValidationError("请填写 API 密钥")
+      return
+    }
+
+    if (!trimmedModel) {
+      setValidationError("请填写模型名称")
+      return
+    }
+
     setConfig({
-      baseURL: baseURL.trim(),
-      apiKey: apiKey.trim(),
-      model: model.trim()
+      baseURL: trimmedBaseURL,
+      apiKey: trimmedApiKey,
+      model: trimmedModel
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
@@ -62,7 +82,7 @@ function OptionsPage() {
               <input
                 type="text"
                 value={baseURL}
-                onChange={(e) => setBaseURL(e.target.value)}
+                onChange={(e) => { setBaseURL(e.target.value); setValidationError(null) }}
                 placeholder="https://api.openai.com/v1"
                 className="w-full px-3 py-2 border border-notion-border rounded-md text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent focus:border-transparent transition-all"
               />
@@ -78,7 +98,7 @@ function OptionsPage() {
               <input
                 type="password"
                 value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => { setApiKey(e.target.value); setValidationError(null) }}
                 placeholder="sk-xxxxxxxxxxxxxxxx"
                 className="w-full px-3 py-2 border border-notion-border rounded-md text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent focus:border-transparent transition-all"
               />
@@ -94,7 +114,7 @@ function OptionsPage() {
               <input
                 type="text"
                 value={model}
-                onChange={(e) => setModel(e.target.value)}
+                onChange={(e) => { setModel(e.target.value); setValidationError(null) }}
                 placeholder="gpt-4o"
                 className="w-full px-3 py-2 border border-notion-border rounded-md text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent focus:border-transparent transition-all"
               />
@@ -102,6 +122,12 @@ function OptionsPage() {
                 例如: gpt-4o, gpt-3.5-turbo, claude-3-opus (取决于你的服务提供商)
               </p>
             </div>
+
+            {validationError && (
+              <div className="px-4 py-3 bg-[#ffebee] border border-[#ffcdd2] rounded-md">
+                <p className="text-sm text-[#c62828]">{validationError}</p>
+              </div>
+            )}
 
             <div className="pt-2">
               <button
