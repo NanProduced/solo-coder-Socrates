@@ -328,20 +328,24 @@ function SidePanel() {
       return
     }
 
-    if (!currentPageId) {
-      setErrorMessage("无法识别当前页面")
-      return
-    }
-
     setIsLoading(true)
     setErrorMessage(null)
     setWarningMessage(null)
 
     let aiResponse: string | null = null
-    let pageInfo: { title: string; url: string; content: string }
 
     try {
-      pageInfo = currentPageInfo.url ? currentPageInfo : await getPageContent()
+      const pageInfo = await getPageContent()
+
+      if (!pageInfo.url) {
+        setErrorMessage("无法识别当前页面 URL")
+        return
+      }
+
+      const newPageId = generatePageId(pageInfo.url)
+
+      setCurrentPageId(newPageId)
+      setCurrentPageInfo({ title: pageInfo.title, url: pageInfo.url, content: pageInfo.content })
 
       let contextPrompt = "用户正在浏览一个网页。"
 
@@ -388,7 +392,7 @@ function SidePanel() {
 
       const optimisticConversation: Conversation = {
         id: generateId(),
-        pageId: currentPageId,
+        pageId: newPageId,
         pageTitle: pageInfo.title,
         pageUrl: pageInfo.url,
         messages: allMessages,
@@ -406,7 +410,7 @@ function SidePanel() {
       ;(async () => {
         try {
           await createConversation(
-            currentPageId,
+            newPageId,
             pageInfo.title,
             pageInfo.url,
             allMessages
