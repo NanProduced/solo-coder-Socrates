@@ -39,6 +39,16 @@
       "storage",
       "scripting"
     ],
-    "optional_permissions": []
+    "optional_permissions": [],
+    "web_accessible_resources": [
+      {
+        "resources": [
+          "pdf.worker.min.mjs"
+        ],
+        "matches": [
+          "<all_urls>"
+        ]
+      }
+    ]
   }
 }
