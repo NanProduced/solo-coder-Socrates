@@ -15,6 +15,19 @@ import {
   deleteConversationRounds,
   deleteAllConversations,
 } from "./lib/storage"
+import {
+  extractPdfFromUrl,
+  extractPdfViaInjection,
+  isPdfUrl,
+  isFileUrl,
+  getCookiesForUrl,
+  checkFileSchemeAccess,
+} from "./lib/pdf-extract"
+import {
+  smartTruncate,
+  buildContextPrompt,
+  type ContentMeta,
+} from "./lib/content-utils"
 import "./style.css"
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
@@ -170,7 +183,12 @@ const formatDateGroup = (timestamp: number): string => {
 
 const extractHostname = (url: string): string => {
   try {
-    return new URL(url).hostname
+    const urlObj = new URL(url)
+    if (urlObj.protocol === "file:") {
+      const filename = urlObj.pathname.split("/").pop() || ""
+      return filename ? decodeURIComponent(filename) : "本地文件"
+    }
+    return urlObj.hostname
   } catch {
     return url
   }
@@ -194,6 +212,8 @@ function SidePanel() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [pageTitle, setPageTitle] = useState("")
   const [pageUrl, setPageUrl] = useState("")
+  const [isLocalFile, setIsLocalFile] = useState(false)
+  const [needsFileAccess, setNeedsFileAccess] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -265,48 +285,340 @@ function SidePanel() {
   const generateId = () =>
     Date.now().toString() + Math.random().toString(36).slice(2, 11)
 
-  const getPageContent = async () => {
+  const getPageContent = async (): Promise<{
+    title: string
+    content: string
+    url: string
+    contextPrompt: string
+    error?: string
+  }> => {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (tab.id) {
-        const results = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            let title = document.title || ""
-            let content = ""
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      })
+      if (!tab?.id || !tab.url) {
+        return { title: "", content: "", url: "", contextPrompt: "", error: "无法获取当前标签页信息" }
+      }
 
-            const mainContent = document.querySelector('main, article, [role="main"], .post, .article, #content')
-            if (mainContent) {
-              content = (mainContent as HTMLElement).innerText
-            } else {
-              const paragraphs = document.querySelectorAll('p')
-              if (paragraphs.length > 3) {
-                const texts: string[] = []
-                paragraphs.forEach((p, i) => {
-                  if (i < 20) texts.push((p as HTMLElement).innerText)
-                })
-                content = texts.join("\n\n")
-              } else {
-                content = document.body.innerText
-              }
-            }
+      const pageUrl = tab.url
 
-            return {
-              title: title.slice(0, 200),
-              content: content.slice(0, 6000),
-              url: window.location.href
-            }
-          }
-        })
-        if (results && results[0]?.result) {
-          const result = results[0].result as { title: string; content: string; url: string }
-          return result
+      if (isPdfUrl(pageUrl)) {
+        if (isFileUrl(pageUrl)) {
+          return await extractLocalPdfContent(tab.id, pageUrl)
+        }
+        return await extractOnlinePdfContent(tab.id, pageUrl)
+      }
+
+      return await extractWebContent(tab.id, pageUrl)
+    } catch (error) {
+      console.error("Failed to get page content:", error)
+      return { title: "", content: "", url: "", contextPrompt: "", error: "页面内容提取失败" }
+    }
+  }
+
+  const extractOnlinePdfContent = async (tabId: number, url: string) => {
+    try {
+      const cookies = await getCookiesForUrl(url)
+      const result = await extractPdfFromUrl(url, cookies || undefined)
+
+      if (result.success && result.content) {
+        const meta: ContentMeta = {
+          title: result.title,
+          excerpt: result.content.slice(0, 200),
+          byline: "",
+          siteName: "",
+          url,
+        }
+        const truncatedContent = smartTruncate(result.content, meta)
+        const contextPrompt = buildContextPrompt(meta, truncatedContent)
+
+        return {
+          title: result.title,
+          content: result.content,
+          url,
+          contextPrompt,
+        }
+      }
+
+      return await extractPdfViaInjectionFallback(tabId, url, result.error)
+    } catch (error) {
+      return await extractPdfViaInjectionFallback(tabId, url, error instanceof Error ? error.message : "PDF 提取失败")
+    }
+  }
+
+  const extractPdfViaInjectionFallback = async (
+    tabId: number,
+    url: string,
+    previousError?: string
+  ) => {
+    try {
+      const result = await extractPdfViaInjection(tabId, url)
+
+      if (result.success && result.content) {
+        const meta: ContentMeta = {
+          title: result.title,
+          excerpt: result.content.slice(0, 200),
+          byline: "",
+          siteName: "",
+          url,
+        }
+        const truncatedContent = smartTruncate(result.content, meta)
+        const contextPrompt = buildContextPrompt(meta, truncatedContent)
+
+        return {
+          title: result.title,
+          content: result.content,
+          url,
+          contextPrompt,
+        }
+      }
+
+      return {
+        title: "",
+        content: "",
+        url,
+        contextPrompt: "",
+        error: `PDF 内容提取失败：${result.error || previousError || "未知错误"}`,
+      }
+    } catch {
+      return {
+        title: "",
+        content: "",
+        url,
+        contextPrompt: "",
+        error: `PDF 内容提取失败：${previousError || "未知错误"}`,
+      }
+    }
+  }
+
+  const extractLocalPdfContent = async (tabId: number, url: string) => {
+    try {
+      const result = await extractPdfViaInjection(tabId, url)
+
+      if (result.success && result.content) {
+        const meta: ContentMeta = {
+          title: result.title,
+          excerpt: result.content.slice(0, 200),
+          byline: "",
+          siteName: "",
+          url,
+        }
+        const truncatedContent = smartTruncate(result.content, meta)
+        const contextPrompt = buildContextPrompt(meta, truncatedContent)
+
+        return {
+          title: result.title,
+          content: result.content,
+          url,
+          contextPrompt,
         }
       }
     } catch (error) {
-      console.error("Failed to get page content:", error)
+      console.error("Local PDF extraction failed:", error)
     }
-    return { title: "", content: "", url: "" }
+    return { title: "", content: "", url: "", contextPrompt: "", error: "本地 PDF 提取失败，请确认已开启文件访问权限" }
+  }
+
+  const extractWebContent = async (tabId: number, pageUrl: string) => {
+    try {
+      const response = await sendTabMessage(tabId, { type: "EXTRACT_CONTENT" })
+
+      if (response?.isPdfViewer) {
+        return await extractOnlinePdfContent(tabId, pageUrl)
+      }
+
+      if (response?.success && response.content) {
+        const meta: ContentMeta = {
+          title: response.title || "",
+          excerpt: response.excerpt || "",
+          byline: response.byline || "",
+          siteName: response.siteName || "",
+          url: pageUrl,
+        }
+        const truncatedContent = smartTruncate(response.content, meta)
+        const contextPrompt = buildContextPrompt(meta, truncatedContent)
+
+        return {
+          title: meta.title,
+          content: response.content,
+          url: pageUrl,
+          contextPrompt,
+        }
+      }
+
+      if (response?.error === "PAGE_CONTENT_TOO_SHORT") {
+        return {
+          title: response.title || "",
+          content: "",
+          url: pageUrl,
+          contextPrompt: "",
+          error: "页面内容过少，无法提取有效信息。请确认页面已完全加载。",
+        }
+      }
+
+      if (response && !response.success) {
+        return {
+          title: response.title || "",
+          content: "",
+          url: pageUrl,
+          contextPrompt: "",
+          error: "页面内容提取失败，请确认页面已完全加载后重试。",
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "Content script not available, falling back to executeScript:",
+        error
+      )
+    }
+
+    return await extractWithScriptInjection(tabId, pageUrl)
+  }
+
+  const sendTabMessage = (
+    tabId: number,
+    message: { type: string }
+  ): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Content script timeout"))
+      }, 2000)
+
+      try {
+        chrome.tabs.sendMessage(tabId, message, (response) => {
+          clearTimeout(timeout)
+          if (chrome.runtime.lastError) {
+            const errMsg = chrome.runtime.lastError.message || ""
+            if (
+              errMsg.includes("Extension context invalidated") ||
+              errMsg.includes("message channel is closed")
+            ) {
+              reject(new Error("扩展上下文已失效，请刷新页面后重试"))
+            } else {
+              reject(new Error(errMsg))
+            }
+          } else {
+            resolve(response)
+          }
+        })
+      } catch {
+        clearTimeout(timeout)
+        reject(new Error("扩展上下文已失效，请刷新页面后重试"))
+      }
+    })
+  }
+
+  const extractWithScriptInjection = async (
+    tabId: number,
+    pageUrl: string,
+    skipPdfRedirect: boolean = false
+  ) => {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const embedEl = document.querySelector(
+            'embed[type="application/pdf"], object[type="application/pdf"]'
+          )
+          if (embedEl) {
+            return { isPdfViewer: true, title: document.title || "", content: "", url: window.location.href }
+          }
+
+          const title = document.title || ""
+          let content = ""
+
+          const removeSelectors = [
+            "script",
+            "style",
+            "noscript",
+            "nav",
+            "header",
+            "footer",
+            "iframe",
+            '[role="navigation"]',
+            '[role="banner"]',
+            '[role="contentinfo"]',
+            ".ad",
+            ".ads",
+            ".sidebar",
+            ".comment",
+            ".social-share",
+            ".cookie-banner",
+          ]
+
+          const mainContent = document.querySelector(
+            'main, article, [role="main"], .post-content, .article-content, .entry-content, #content'
+          )
+
+          const source = mainContent || document.body
+          const clone = source.cloneNode(true) as HTMLElement
+
+          removeSelectors.forEach((sel) => {
+            try {
+              clone.querySelectorAll(sel).forEach((node) => node.remove())
+            } catch {}
+          })
+
+          content = clone.innerText || document.body.innerText
+
+          return { isPdfViewer: false, title, content, url: window.location.href }
+        },
+      })
+
+      if (results && results[0]?.result) {
+        const result = results[0].result as {
+          isPdfViewer: boolean
+          title: string
+          content: string
+          url: string
+        }
+
+        if (result.isPdfViewer && !skipPdfRedirect) {
+          return await extractOnlinePdfContent(tabId, pageUrl)
+        }
+
+        if (result.isPdfViewer && skipPdfRedirect) {
+          return {
+            title: result.title,
+            content: "",
+            url: result.url,
+            contextPrompt: "",
+            error: "PDF 内容提取失败，无法读取该 PDF 文件。",
+          }
+        }
+
+        if (result.content && result.content.length > 50) {
+          const meta: ContentMeta = {
+            title: result.title,
+            excerpt: result.content.slice(0, 200),
+            byline: "",
+            siteName: "",
+            url: pageUrl,
+          }
+          const truncatedContent = smartTruncate(result.content, meta)
+          const contextPrompt = buildContextPrompt(meta, truncatedContent)
+
+          return {
+            title: result.title,
+            content: result.content,
+            url: result.url,
+            contextPrompt,
+          }
+        }
+
+        return {
+          title: result.title,
+          content: "",
+          url: result.url,
+          contextPrompt: "",
+          error: "页面内容过少，无法提取有效信息。请确认页面已完全加载。",
+        }
+      }
+    } catch (error) {
+      console.error("Script injection fallback failed:", error)
+    }
+    return { title: "", content: "", url: "", contextPrompt: "", error: "无法提取页面内容，可能是浏览器限制页面" }
   }
 
   const callOpenAI = async (msgs: Message[]): Promise<string> => {
@@ -358,15 +670,40 @@ function SidePanel() {
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.url || !tab.url.startsWith("http")) {
+      if (!tab?.url) {
         setPageKey("")
         setRounds([])
         setActiveRoundId(null)
         setViewingRoundId(null)
+        setIsLocalFile(false)
+        setNeedsFileAccess(false)
         return
       }
 
-      const key = generatePageKey(tab.url)
+      const tabUrl = tab.url
+      const isFile = isFileUrl(tabUrl)
+      const isHttp = tabUrl.startsWith("http")
+
+      if (!isFile && !isHttp) {
+        setPageKey("")
+        setRounds([])
+        setActiveRoundId(null)
+        setViewingRoundId(null)
+        setIsLocalFile(false)
+        setNeedsFileAccess(false)
+        return
+      }
+
+      if (isFile) {
+        setIsLocalFile(true)
+        const hasAccess = await checkFileSchemeAccess()
+        setNeedsFileAccess(!hasAccess)
+      } else {
+        setIsLocalFile(false)
+        setNeedsFileAccess(false)
+      }
+
+      const key = generatePageKey(tabUrl)
 
       if (key === pageKeyRef.current) {
         setShowHistoryPanel(false)
@@ -375,7 +712,7 @@ function SidePanel() {
       }
 
       setPageKey(key)
-      setPageUrl(tab.url)
+      setPageUrl(tabUrl)
       setPageTitle(tab.title ?? "")
 
       const loadedRounds = await loadPageConversations(key)
@@ -524,25 +861,36 @@ function SidePanel() {
       return
     }
 
+    if (isLocalFile && needsFileAccess) {
+      setErrorMessage("请先开启本地文件访问权限（见下方指引）")
+      return
+    }
+
     setIsLoading(true)
     setErrorMessage(null)
 
     try {
       const pageInfo = await getPageContent()
 
-      let contextPrompt = "用户正在浏览一个网页。"
+      if (pageInfo.error || !pageInfo.content || pageInfo.content.length < 50) {
+        setErrorMessage(pageInfo.error || "无法提取页面内容，请确认页面已完全加载后再试")
+        setIsLoading(false)
+        return
+      }
 
-      if (pageInfo.title) {
-        contextPrompt += `\n\n网页标题：${pageInfo.title}`
-      }
-      if (pageInfo.url) {
-        try {
-          const urlObj = new URL(pageInfo.url)
-          contextPrompt += `\n网站：${urlObj.hostname}`
-        } catch {}
-      }
-      if (pageInfo.content && pageInfo.content.length > 50) {
-        contextPrompt += `\n\n网页内容（开头部分）：\n${pageInfo.content.slice(0, 4000)}`
+      let contextPrompt = pageInfo.contextPrompt
+
+      if (!contextPrompt) {
+        contextPrompt = "用户正在浏览一个网页。"
+        if (pageInfo.title) {
+          contextPrompt += `\n\n网页标题：${pageInfo.title}`
+        }
+        if (pageInfo.url) {
+          try {
+            const urlObj = new URL(pageInfo.url)
+            contextPrompt += `\n网站：${urlObj.hostname}`
+          } catch {}
+        }
       }
 
       const roundId = generateId()
@@ -1110,6 +1458,39 @@ function SidePanel() {
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     需在设置中配置 API 密钥
                   </p>
+                )}
+
+                {isLocalFile && needsFileAccess && (
+                  <div className="mt-6 w-full max-w-xs mx-auto">
+                    <div className="px-4 py-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-xl text-left">
+                      <div className="flex items-start gap-2.5">
+                        <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div>
+                          <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1.5">
+                            需要开启本地文件访问权限
+                          </p>
+                          <p className="text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed mb-2.5">
+                            要读取本地 PDF 或 HTML 文件，请在扩展管理页面开启"允许访问文件网址"：
+                          </p>
+                          <ol className="text-[11px] text-amber-600 dark:text-amber-400/80 leading-relaxed space-y-1 mb-3 list-decimal list-inside">
+                            <li>点击下方按钮打开扩展管理页</li>
+                            <li>找到「苏格拉底式阅读助手」</li>
+                            <li>点击「详情」</li>
+                            <li>开启「允许访问文件网址」开关</li>
+                            <li>刷新当前页面后重新使用</li>
+                          </ol>
+                          <button
+                            onClick={() => chrome.tabs.create({ url: "chrome://extensions/?id=" + chrome.runtime.id })}
+                            className="w-full text-[11px] font-semibold px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors"
+                          >
+                            打开扩展管理页
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
             ) : (

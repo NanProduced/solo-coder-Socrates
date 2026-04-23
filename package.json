@@ -10,7 +10,9 @@
     "package": "plasmo package"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@plasmohq/storage": "^1.15.0",
+    "pdfjs-dist": "3.11.174",
     "plasmo": "0.90.5",
     "react": "18.3.1",
     "react-dom": "18.3.1"
@@ -27,12 +29,21 @@
   },
   "manifest": {
     "host_permissions": [
-      "https://*/*"
+      "https://*/*",
+      "http://*/*",
+      "file:///*"
     ],
     "permissions": [
       "activeTab",
       "storage",
-      "scripting"
+      "scripting",
+      "cookies"
+    ],
+    "web_accessible_resources": [
+      {
+        "resources": ["assets/pdf.worker.min.js"],
+        "matches": ["<all_urls>"]
+      }
     ]
   }
 }
