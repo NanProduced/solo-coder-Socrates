@@ -14,6 +14,7 @@ export interface StructuredOutput {
   mode: "question" | "summary"
   answer: string
   question: string
+  options?: string[]
 }
 
 export interface StreamState {
@@ -29,6 +30,7 @@ export interface Message {
   visible: boolean
   structuredOutput?: StructuredOutput
   isStreaming?: boolean
+  selectedOption?: string
 }
 
 export interface ConversationRound {
