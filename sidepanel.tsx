@@ -76,6 +76,75 @@ const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和
 - "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
 - "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
 
+const SOCRATES_OPTION_MODE_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
+
+## 核心原则
+1. **一次只问一个问题** - 不要连续提出多个问题，每轮回复只能包含一个问句
+2. **动态调整深度**：
+   - 如果用户回答正确/深入，追问更深入的问题
+   - 如果用户回答偏离主题，换个角度重新提问
+   - 如果用户表示不懂，给出线索或提示性问题
+3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
+4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
+5. **总结模式绝对禁止追问** - 当进入总结模式时，只输出总结内容，不要提出任何问题
+
+## 选项模式要求（重要！）
+当前处于选项模式，你必须在每个问题下方提供3-4个选项，就像英语阅读理解题一样。选项格式如下：
+
+A. 选项内容
+B. 选项内容  
+C. 选项内容
+D. 选项内容（可选）
+
+### 选项设计原则：
+1. **3-4个选项** - 每个问题必须有3个或4个选项
+2. **一个最佳答案** - 选项中应该有一个是最佳答案，其他是干扰项
+3. **循序渐进** - 选项应该从浅到深，引导用户逐步理解
+4. **干扰项合理** - 干扰项应该看起来有道理，但实际上不正确或不完整
+5. **选项内容** - 选项应该基于当前讨论的主题，与问题直接相关
+
+### 示例：
+问题：你认为这篇文章的核心论点是什么？
+
+A. 作者认为技术发展会带来失业问题
+B. 作者强调技术进步需要与人文关怀相结合
+C. 作者完全反对人工智能的发展
+D. 作者讨论了技术发展的历史演变
+
+## 对话流程
+1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题，并附上3-4个选项
+2. 根据用户的回答，判断理解程度，调整下一个问题
+3. 持续深入，直到用户真正理解核心概念
+
+## 回答要求
+- 像苏格拉底那样对话，使用温和的语气
+- 提出的问题要能激发批判性思考
+- 当用户说"总结"或"帮我总结"时，才提供简洁的总结
+- 不要说教，要引导
+- 如果用户正在阅读的是中文文档，请用中文提问和对话
+- 如果用户正在阅读的是英文文档，可以用英文或中文对话
+- 你的回复将被程序解析校验，请确保：
+  - 问题清晰可辨，问句使用问号结尾
+  - 选项使用 A. B. C. D. 格式
+  - 选项数量为3个或4个
+
+## 开始对话
+当用户开始对话时，请根据用户正在阅读的文档内容，提出一个苏格拉底式的引导问题，并附上3-4个选项。
+
+你的第一个问题应该：
+- 基于文档的核心主题或标题
+- 鼓励用户思考文档的主要目的
+- 温和而好奇的语气
+- 附上3-4个选项
+
+例如（根据实际内容调整）：
+"我注意到你正在阅读一篇关于人工智能的文章。你觉得这篇文章试图告诉我们什么？
+
+A. 人工智能将会完全取代人类工作
+B. 人工智能是一把双刃剑，需要谨慎对待
+C. 人工智能的发展对社会没有任何影响
+D. 人工智能只适用于特定领域"`
+
 const escapeHtml = (text: string): string => {
   return text
     .replace(/&/g, '&amp;')
@@ -198,6 +267,7 @@ const extractHostname = (url: string): string => {
 
 function SidePanel() {
   const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
+  const [optionMode, setOptionMode] = useStorage<boolean>("option-mode", false)
   const [pageKey, setPageKey] = useState("")
   const [rounds, setRounds] = useState<ConversationRound[]>([])
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
@@ -906,10 +976,12 @@ function SidePanel() {
 
       const roundId = generateId()
 
+      const systemPrompt = optionMode ? SOCRATES_OPTION_MODE_PROMPT : SOCRATES_SYSTEM_PROMPT
+
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
-        content: SOCRATES_SYSTEM_PROMPT + "\n\n" + contextPrompt,
+        content: systemPrompt + "\n\n" + contextPrompt,
         timestamp: Date.now(),
         visible: false
       }
@@ -1447,7 +1519,25 @@ function SidePanel() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-0.5 flex-shrink-0">
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={() => setOptionMode(!optionMode)}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium transition-all ${
+              optionMode
+                ? "bg-notion-accent/10 text-notion-accent"
+                : "text-notion-text-secondary hover:bg-notion-hover"
+            }`}
+            title={optionMode ? "选项模式已开启" : "开启选项模式"}
+          >
+            <div className={`relative w-7 h-4 rounded-full transition-colors ${
+              optionMode ? "bg-notion-accent" : "bg-notion-border"
+            }`}>
+              <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                optionMode ? "translate-x-3" : "translate-x-0"
+              }`} />
+            </div>
+            <span className="hidden sm:inline">选项</span>
+          </button>
           {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
             <button
               onClick={handleSummarize}
