@@ -7,6 +7,7 @@ import {
   ConversationRound,
   generatePageKey,
   isSummaryRequest,
+  ConversationMode,
 } from "./lib/types"
 import {
   loadPageConversations,
@@ -28,44 +29,12 @@ import {
   buildContextPrompt,
   type ContentMeta,
 } from "./lib/content-utils"
+import {
+  callLLMStream,
+  type StreamCallback,
+  stripThinkTags,
+} from "./lib/llm-service"
 import "./style.css"
-
-const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
-
-## 核心原则
-1. **一次只问一个问题** - 不要连续提出多个问题
-2. **动态调整深度**：
-   - 如果用户回答正确/深入，追问更深入的问题
-   - 如果用户回答偏离主题，换个角度重新提问
-   - 如果用户表示不懂，给出线索或提示性问题
-3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
-4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
-
-## 对话流程
-1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题
-2. 根据用户的回答，判断理解程度，调整下一个问题
-3. 持续深入，直到用户真正理解核心概念
-
-## 回答要求
-- 像苏格拉底那样对话，使用温和的语气
-- 提出的问题要能激发批判性思考
-- 当用户说"总结"或"帮我总结"时，才提供简洁的总结
-- 不要说教，要引导
-- 如果用户正在阅读的是中文文档，请用中文提问和对话
-- 如果用户正在阅读的是英文文档，可以用英文或中文对话
-
-## 开始对话
-当用户开始对话时，请根据用户正在阅读的文档内容，提出一个苏格拉底式的引导问题。不要使用固定的模板，要根据实际内容来提问。
-
-你的第一个问题应该：
-- 基于文档的核心主题或标题
-- 鼓励用户思考文档的主要目的
-- 温和而好奇的语气
-
-例如（根据实际内容调整）：
-- "我注意到你正在阅读一篇关于[主题]的文章。你觉得这篇文章试图告诉我们什么？"
-- "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
-- "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
 
 const escapeHtml = (text: string): string => {
   return text
@@ -74,13 +43,6 @@ const escapeHtml = (text: string): string => {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
-}
-
-const stripThinkTags = (content: string): string => {
-  return content
-    .replace(/<think[\s\S]*?<\/think>/g, "")
-    .replace(/<think[\s\S]*$/g, "")
-    .trim()
 }
 
 const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
@@ -208,6 +170,9 @@ function SidePanel() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [streamingContent, setStreamingContent] = useState("")
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const [hasConfig, setHasConfig] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [pageTitle, setPageTitle] = useState("")
@@ -280,7 +245,7 @@ function SidePanel() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+  }, [messages, streamingContent])
 
   const generateId = () =>
     Date.now().toString() + Math.random().toString(36).slice(2, 11)
@@ -621,42 +586,34 @@ function SidePanel() {
     return { title: "", content: "", url: "", contextPrompt: "", error: "无法提取页面内容，可能是浏览器限制页面" }
   }
 
-  const callOpenAI = async (msgs: Message[]): Promise<string> => {
-    if (!config.apiKey || !config.baseURL) {
-      throw new Error("请先配置 API 参数")
+  const callLLMWithStream = async (
+    msgs: Message[],
+    mode: ConversationMode
+  ): Promise<string> => {
+    const streamId = generateId()
+    setStreamingMessageId(streamId)
+    setStreamingContent("")
+    setIsStreaming(true)
+
+    const onStream: StreamCallback = (chunk) => {
+      if (!chunk.done && chunk.content) {
+        setStreamingContent((prev) => prev + chunk.content)
+      }
     }
 
-    const baseURL = config.baseURL.endsWith("/") ? config.baseURL : config.baseURL + "/"
-    const url = baseURL + "chat/completions"
+    try {
+      const response = await callLLMStream(config, msgs, { mode }, onStream)
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model || "gpt-4o",
-        messages: msgs.map(m => ({
-          role: m.role,
-          content: m.content
-        })),
-        temperature: 0.7,
-        max_tokens: 1500
-      })
-    })
+      if (!response.validation.passed && response.validation.issues.length > 0) {
+        console.warn("LLM响应验证警告:", response.validation.issues)
+      }
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.error?.message || `API 错误: ${response.status}`)
+      return response.content
+    } finally {
+      setIsStreaming(false)
+      setStreamingContent("")
+      setStreamingMessageId(null)
     }
-
-    const data = await response.json()
-    let content = data.choices[0]?.message?.content || ""
-
-    content = stripThinkTags(content)
-
-    return content
   }
 
   const persistRounds = async (newRounds: ConversationRound[]) => {
@@ -913,7 +870,7 @@ function SidePanel() {
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
-        content: SOCRATES_SYSTEM_PROMPT + "\n\n" + contextPrompt,
+        content: contextPrompt,
         timestamp: Date.now(),
         visible: false
       }
@@ -943,7 +900,7 @@ function SidePanel() {
       setViewingRoundId(null)
       if (pageKey) await savePageConversations(pageKey, newRounds)
 
-      const aiResponse = await callOpenAI([initialMessage, firstUserMessage])
+      const aiResponse = await callLLMWithStream([initialMessage, firstUserMessage], "single_question")
 
       const assistantMessage: Message = {
         id: generateId(),
@@ -981,7 +938,9 @@ function SidePanel() {
       visible: true
     }
 
-    const shouldComplete = isSummaryRequest(input.trim())
+    const isSummary = isSummaryRequest(input.trim())
+    const mode: ConversationMode = isSummary ? "summary" : "single_question"
+    const shouldComplete = isSummary
     const currentRound = activeRound
     const messagesAfterUser = [...currentRound.messages, userMessage]
     const roundAfterUser: ConversationRound = {
@@ -1000,7 +959,7 @@ function SidePanel() {
     if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
     try {
-      const response = await callOpenAI(messagesAfterUser)
+      const response = await callLLMWithStream(messagesAfterUser, mode)
       const assistantMessage: Message = {
         id: generateId(),
         role: "assistant",
@@ -1038,14 +997,6 @@ function SidePanel() {
       visible: true
     }
 
-    const internalInstruction: Message = {
-      id: generateId(),
-      role: "user",
-      content: "用户现在希望总结我们的对话和文档的核心内容。请提供一个简洁、清晰的总结，包括：1) 文档的核心主题，2) 我们讨论过的关键点，3) 主要的理解收获。",
-      timestamp: Date.now(),
-      visible: false
-    }
-
     const currentRound = activeRound
     const messagesWithUserAction = [...currentRound.messages, userActionMessage]
     const roundAfterUser: ConversationRound = {
@@ -1063,8 +1014,7 @@ function SidePanel() {
     if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
     try {
-      const messagesForAI = [...currentRound.messages, internalInstruction]
-      const response = await callOpenAI(messagesForAI)
+      const response = await callLLMWithStream(messagesWithUserAction, "summary")
       const assistantMessage: Message = {
         id: generateId(),
         role: "assistant",
@@ -1554,7 +1504,19 @@ function SidePanel() {
                     </div>
                   </div>
                 ))}
-                {isLoading && (
+                {isStreaming && streamingContent && (
+                  <div className="flex gap-3">
+                    <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-notion-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5h8M9 5v14m6-14v14" />
+                      </svg>
+                    </div>
+                    <div className="max-w-[95%] px-4 py-2.5 rounded-2xl bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm">
+                      <MarkdownMessage content={streamingContent} isUser={false} />
+                    </div>
+                  </div>
+                )}
+                {isLoading && !isStreaming && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
                       <div className="flex gap-1">
