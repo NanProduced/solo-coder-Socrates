@@ -221,6 +221,15 @@ function extractByline(): string {
   return ""
 }
 
+function isContextValid(): boolean {
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime) return false
+    return !!chrome.runtime?.id
+  } catch {
+    return false
+  }
+}
+
 function safeSendResponse(
   sendResponse: (response?: any) => void,
   result: ExtractResult
@@ -234,6 +243,8 @@ function safeSendResponse(
 
 chrome.runtime.onMessage.addListener(
   (request: { type: string }, _sender, sendResponse) => {
+    if (!isContextValid()) return false
+
     if (request.type === "EXTRACT_CONTENT") {
       try {
         const result = extractWithReadability()

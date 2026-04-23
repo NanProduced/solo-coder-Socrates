@@ -216,6 +216,7 @@ function SidePanel() {
   })
   const [hasConfig, setHasConfig] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [contextInvalidated, setContextInvalidated] = useState(false)
   const [pageTitle, setPageTitle] = useState("")
   const [pageUrl, setPageUrl] = useState("")
   const [isLocalFile, setIsLocalFile] = useState(false)
@@ -231,6 +232,20 @@ function SidePanel() {
   useEffect(() => {
     pageKeyRef.current = pageKey
   }, [pageKey])
+
+  useEffect(() => {
+    const check = () => {
+      try {
+        if (typeof chrome !== "undefined" && chrome.runtime && !chrome.runtime.id) {
+          setContextInvalidated(true)
+        }
+      } catch {
+        setContextInvalidated(true)
+      }
+    }
+    const interval = setInterval(check, 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   const activeRound = useMemo(
     () => rounds.find((r) => r.id === activeRoundId) ?? null,
@@ -502,6 +517,7 @@ function SidePanel() {
               errMsg.includes("Extension context invalidated") ||
               errMsg.includes("message channel is closed")
             ) {
+              setContextInvalidated(true)
               reject(new Error("扩展上下文已失效，请刷新页面后重试"))
             } else {
               reject(new Error(errMsg))
@@ -512,6 +528,7 @@ function SidePanel() {
         })
       } catch {
         clearTimeout(timeout)
+        setContextInvalidated(true)
         reject(new Error("扩展上下文已失效，请刷新页面后重试"))
       }
     })
@@ -1394,6 +1411,25 @@ function SidePanel() {
 
   return (
     <div className="flex flex-col h-full bg-notion-bg text-notion-text transition-colors duration-300">
+      {contextInvalidated && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-notion-bg/95 backdrop-blur-sm">
+          <div className="text-center px-8 max-w-xs">
+            <div className="w-12 h-12 mx-auto mb-4 bg-amber-100 rounded-xl flex items-center justify-center">
+              <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </div>
+            <h3 className="text-sm font-bold text-notion-text mb-2">扩展已更新</h3>
+            <p className="text-xs text-notion-text-secondary mb-4">检测到扩展上下文已失效，这通常是因为扩展被重新加载或更新。请刷新页面以恢复功能。</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-6 py-2.5 bg-notion-accent text-white rounded-xl text-sm font-medium shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95"
+            >
+              刷新页面
+            </button>
+          </div>
+        </div>
+      )}
       <header className="flex items-center justify-between px-4 py-3 border-b border-notion-border bg-notion-bg/80 backdrop-blur-md sticky top-0 z-20 gap-2">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="w-8 h-8 bg-notion-accent rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm shadow-notion-accent/20">
