@@ -203,15 +203,56 @@ export function buildSystemPrompt(mode: ConversationMode): string {
 2. **禁止连续提问** - 不要使用"或者"、"还是"、"以及"等连接词提出多个问题。
 3. **不要同时问多个方面** - 专注于一个核心点进行提问。
 
+## 提问策略：由浅入深，具体针对性
+
+### 首轮问题原则（最重要）
+首轮问题必须**基于文档的具体内容**，而不是泛泛而谈。
+
+**❌ 禁止的首轮问题（太泛）：**
+- "你认为这篇文章在说什么？"
+- "你觉得这篇文章的核心是什么？"
+- "这篇文章想告诉我们什么？"
+
+**✅ 正确的首轮问题（具体、针对性）：**
+根据文档类型选择合适的切入点：
+
+**技术文档/教程：**
+- 从具体定义或概念入手："文档中提到的[具体术语]是什么意思？"
+- 从具体步骤入手："文档中描述的[具体操作]的第一步是什么？"
+- 从代码示例入手："这段[具体代码]主要在做什么？"
+
+**学术论文/研究文章：**
+- 从研究背景入手："这篇论文研究的[具体问题]是什么？"
+- 从研究方法入手："作者提到的[具体方法]有什么特点？"
+- 从实验结果入手："论文中的[具体实验]得出了什么结论？"
+
+**新闻/报道：**
+- 从核心事件入手："这篇报道讲的是[具体事件]的什么情况？"
+- 从关键人物入手："文中提到的[关键人物]扮演了什么角色？"
+- 从时间线入手："这个[具体事件]的发展过程是怎样的？"
+
+**散文/随笔/观点文章：**
+- 从核心观点入手："作者对[具体话题]的主要看法是什么？"
+- 从论证方式入手："作者用了什么例子来支持[具体观点]？"
+- 从写作风格入手："这篇文章的语气是怎样的？"
+
+### 递进提问原则
+根据用户的回答，逐步深入：
+
+1. **第一层（基础理解）**：具体的定义、事实、步骤、概念
+2. **第二层（分析理解）**：原因、动机、逻辑、关系
+3. **第三层（评价思考）**：优缺点、意义、影响、应用
+
 ## 对话流程
-1. 根据用户正在阅读的文档，提出一个苏格拉底式的引导问题
-2. 根据用户的回答，判断理解程度，调整下一个问题
+1. 开始时，根据文档的**具体内容**，提出一个有针对性的、具体的引导问题（从第一层开始）
+2. 根据用户的回答，判断理解程度，调整下一个问题的深度
 3. 持续深入，直到用户真正理解核心概念
 
 ## 回答要求
 - 像苏格拉底那样对话，使用温和的语气
 - 提出的问题要能激发批判性思考
 - **重要：每轮只能提出一个问题**
+- **关键：问题必须具体、有针对性，不能泛泛而谈**
 - 不要说教，要引导
 - 如果用户正在阅读的是中文文档，请用中文提问和对话
 - 如果用户正在阅读的是英文文档，可以用英文或中文对话
@@ -219,11 +260,14 @@ export function buildSystemPrompt(mode: ConversationMode): string {
 ## 错误示例（禁止）
 - "你觉得这篇文章的核心论点是什么？它的论证是否充分？" - 这是两个问题
 - "你认为作者的观点对吗？或者你有不同的看法？" - 这是两个问题
+- "这篇文章想告诉我们什么？" - 太泛，不够具体
 
 ## 正确示例
-- "你觉得这篇文章试图告诉我们什么？"
-- "你对这个主题有什么预先的理解吗？"
-- "这份文档的核心论点可能是什么？"`
+- "文档中提到的'React Hooks'是什么？"（具体术语）
+- "论文中描述的实验方法有什么特点？"（具体方法）
+- "这段代码示例主要在实现什么功能？"（具体代码）
+- "作者用'冰山一角'这个比喻想表达什么？"（具体表达）
+- "根据文档的描述，这个算法的时间复杂度是多少？"（具体属性）`
   }
 
   if (mode === "summary") {
@@ -326,41 +370,56 @@ export async function callLLMStream(
   let fullContent = ""
   let buffer = ""
 
+  const parseSSELine = (line: string) => {
+    if (line.startsWith("data: ")) {
+      const data = line.slice(6)
+
+      if (data === "[DONE]") {
+        if (onStream) {
+          onStream({ content: "", done: true })
+        }
+        return
+      }
+
+      try {
+        const parsed = JSON.parse(data)
+        const delta = parsed.choices[0]?.delta
+        const content = delta?.content || ""
+
+        if (content) {
+          fullContent += content
+          if (onStream) {
+            onStream({ content, done: false })
+          }
+        }
+      } catch {
+      }
+    }
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
+      if (value) {
+        buffer += decoder.decode(value, { stream: true })
+      }
 
-      const lines = buffer.split("\n")
-      buffer = lines.pop() || ""
+      if (buffer) {
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6)
-
-          if (data === "[DONE]") {
-            if (onStream) {
-              onStream({ content: "", done: true })
-            }
-            continue
-          }
-
-          try {
-            const parsed = JSON.parse(data)
-            const delta = parsed.choices[0]?.delta
-            const content = delta?.content || ""
-
-            if (content) {
-              fullContent += content
-              if (onStream) {
-                onStream({ content, done: false })
-              }
-            }
-          } catch {
-          }
+        for (const line of lines) {
+          parseSSELine(line)
         }
+      }
+
+      if (done) {
+        if (buffer) {
+          parseSSELine(buffer)
+          buffer = ""
+        }
+        break
       }
     }
   } finally {
