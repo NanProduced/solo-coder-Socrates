@@ -670,7 +670,7 @@ function SidePanel() {
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.url) {
+      if (!tab) {
         setPageKey("")
         setRounds([])
         setActiveRoundId(null)
@@ -680,17 +680,23 @@ function SidePanel() {
         return
       }
 
-      const tabUrl = tab.url
+      const tabUrl = tab.url || ""
       const isFile = isFileUrl(tabUrl)
       const isHttp = tabUrl.startsWith("http")
 
       if (!isFile && !isHttp) {
+        const hasFileAccess = await checkFileSchemeAccess()
+        if (!hasFileAccess && tabUrl === "") {
+          setIsLocalFile(true)
+          setNeedsFileAccess(true)
+        } else {
+          setIsLocalFile(false)
+          setNeedsFileAccess(false)
+        }
         setPageKey("")
         setRounds([])
         setActiveRoundId(null)
         setViewingRoundId(null)
-        setIsLocalFile(false)
-        setNeedsFileAccess(false)
         return
       }
 
@@ -863,6 +869,15 @@ function SidePanel() {
 
     if (isLocalFile && needsFileAccess) {
       setErrorMessage("请先开启本地文件访问权限（见下方指引）")
+      return
+    }
+
+    if (!pageKey) {
+      if (isLocalFile && needsFileAccess) {
+        setErrorMessage("请先开启本地文件访问权限（见下方指引）")
+      } else {
+        setErrorMessage("无法识别当前页面，请刷新页面后重试")
+      }
       return
     }
 
@@ -1458,6 +1473,19 @@ function SidePanel() {
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                     需在设置中配置 API 密钥
                   </p>
+                )}
+
+                {errorMessage && (
+                  <div className="mt-6 w-full max-w-xs mx-auto">
+                    <div className="px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-xl">
+                      <p className="text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                        <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {errorMessage}
+                      </p>
+                    </div>
+                  </div>
                 )}
 
                 {isLocalFile && needsFileAccess && (
