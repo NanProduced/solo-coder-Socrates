@@ -1,3 +1,5 @@
+export type ConversationMode = "single_question" | "summary"
+
 export interface OpenAIConfig {
   baseURL: string
   apiKey: string
