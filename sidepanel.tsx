@@ -1250,6 +1250,8 @@ function SidePanel() {
         r.id === currentRound.id ? roundAfterAI : r
       )
       await persistRounds(roundsAfterAI)
+
+      triggerUnderstandingStateUpdate(roundsAfterAI)
     } catch (error) {
       if (abortController.signal.aborted) {
         const partialMessage: Message = {
@@ -1406,38 +1408,7 @@ function SidePanel() {
       )
       await persistRounds(roundsAfterAI)
 
-      if (knowledgeDoc && hasConfig) {
-        try {
-          let contentToUse = pageContentCache
-          if (!contentToUse) {
-            const pageInfo = await getPageContent()
-            if (pageInfo.content) {
-              contentToUse = pageInfo.content
-              setPageContentCache(contentToUse)
-            }
-          }
-
-          if (contentToUse) {
-            const newState = await updateUnderstandingStateFromConversation(
-              config,
-              knowledgeDoc,
-              contentToUse,
-              roundsAfterAI
-            )
-
-            const updatedDoc = await updateKnowledgeDocVersion(pageKey, {
-              understandingState: newState,
-              conversationRounds: roundsAfterAI.map(r => r.id),
-            })
-
-            if (updatedDoc) {
-              setKnowledgeDoc(updatedDoc)
-            }
-          }
-        } catch (updateError) {
-          console.warn("更新理解状态失败:", updateError)
-        }
-      }
+      triggerUnderstandingStateUpdate(roundsAfterAI)
     } catch (error) {
       if (abortController.signal.aborted) {
         const partialMessage: Message = {
@@ -1490,6 +1461,41 @@ function SidePanel() {
     setErrorMessage(null)
     setInput("")
   }
+
+  const triggerUnderstandingStateUpdate = useCallback(async (updatedRounds: ConversationRound[]) => {
+    if (!knowledgeDoc || !hasConfig || !pageKey) return
+
+    try {
+      let contentToUse = pageContentCache
+      if (!contentToUse) {
+        const pageInfo = await getPageContent()
+        if (pageInfo.content) {
+          contentToUse = pageInfo.content
+          setPageContentCache(contentToUse)
+        }
+      }
+
+      if (!contentToUse) return
+
+      const newState = await updateUnderstandingStateFromConversation(
+        config,
+        knowledgeDoc,
+        contentToUse,
+        updatedRounds
+      )
+
+      const updatedDoc = await updateKnowledgeDocVersion(pageKey, {
+        understandingState: newState,
+        conversationRounds: updatedRounds.map(r => r.id),
+      })
+
+      if (updatedDoc) {
+        setKnowledgeDoc(updatedDoc)
+      }
+    } catch (updateError) {
+      console.warn("更新理解状态失败:", updateError)
+    }
+  }, [knowledgeDoc, hasConfig, pageKey, pageContentCache, config, getPageContent])
 
   const handleOpenHistoryRound = async (round: ConversationRound) => {
     if (editMode) return

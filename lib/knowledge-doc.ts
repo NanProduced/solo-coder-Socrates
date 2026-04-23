@@ -10,6 +10,164 @@ import {
 import { callLLM } from "./llm"
 import { saveKnowledgeDoc } from "./storage"
 
+function normalizeString(value: unknown, fallback: string = ""): string {
+  if (typeof value === "string") return value
+  return fallback
+}
+
+function normalizeArray<T>(value: unknown, fallback: T[] = []): T[] {
+  if (Array.isArray(value)) return value
+  return fallback
+}
+
+function normalizeImportance(value: unknown): "core" | "important" | "supporting" {
+  const str = normalizeString(value)
+  if (str === "core" || str === "important" || str === "supporting") return str
+  return "supporting"
+}
+
+function normalizeCardCategory(value: unknown): "definition" | "example" | "principle" | "relationship" | "application" {
+  const str = normalizeString(value)
+  if (str === "definition" || str === "example" || str === "principle" || str === "relationship" || str === "application") return str
+  return "definition"
+}
+
+function normalizePhase(value: unknown): "introductory" | "exploring" | "deepening" | "synthesizing" | "mastering" {
+  const str = normalizeString(value)
+  if (str === "introductory" || str === "exploring" || str === "deepening" || str === "synthesizing" || str === "mastering") return str
+  return "introductory"
+}
+
+function normalizePriority(value: unknown): "high" | "medium" | "low" {
+  const str = normalizeString(value)
+  if (str === "high" || str === "medium" || str === "low") return str
+  return "medium"
+}
+
+export function normalizeKeyConcept(concept: unknown, index: number = 0): KeyConcept {
+  const safeConcept = typeof concept === "object" && concept !== null ? concept : {} as Record<string, unknown>
+
+  return {
+    id: normalizeString((safeConcept as Record<string, unknown>).id, `concept-${index}-${Date.now()}`),
+    term: normalizeString((safeConcept as Record<string, unknown>).term, "未命名概念"),
+    definition: normalizeString((safeConcept as Record<string, unknown>).definition, "暂未定义"),
+    importance: normalizeImportance((safeConcept as Record<string, unknown>).importance),
+    relationships: normalizeArray((safeConcept as Record<string, unknown>).relationships),
+  }
+}
+
+export function normalizeKnowledgeCard(card: unknown, index: number = 0): KnowledgeCard {
+  const safeCard = typeof card === "object" && card !== null ? card : {} as Record<string, unknown>
+
+  return {
+    id: normalizeString((safeCard as Record<string, unknown>).id, `card-${index}-${Date.now()}`),
+    title: normalizeString((safeCard as Record<string, unknown>).title, "未命名卡片"),
+    content: normalizeString((safeCard as Record<string, unknown>).content, "暂无内容"),
+    category: normalizeCardCategory((safeCard as Record<string, unknown>).category),
+    tags: normalizeArray((safeCard as Record<string, unknown>).tags),
+    sourceReference: (safeCard as Record<string, unknown>).sourceReference !== undefined
+      ? normalizeString((safeCard as Record<string, unknown>).sourceReference)
+      : undefined,
+  }
+}
+
+export function normalizeNeedClarification(item: unknown): UnderstandingState["needClarification"][0] {
+  const safeItem = typeof item === "object" && item !== null ? item : {} as Record<string, unknown>
+
+  return {
+    concept: normalizeString((safeItem as Record<string, unknown>).concept, "未知概念"),
+    reason: normalizeString((safeItem as Record<string, unknown>).reason, "需要进一步澄清"),
+    priority: normalizePriority((safeItem as Record<string, unknown>).priority),
+  }
+}
+
+export function normalizeNextStep(item: unknown): UnderstandingState["nextSteps"][0] {
+  const safeItem = typeof item === "object" && item !== null ? item : {} as Record<string, unknown>
+
+  return {
+    action: normalizeString((safeItem as Record<string, unknown>).action, "继续学习"),
+    rationale: normalizeString((safeItem as Record<string, unknown>).rationale, "巩固现有知识"),
+    priority: normalizePriority((safeItem as Record<string, unknown>).priority),
+  }
+}
+
+export function normalizeEvidenceStatus(value: unknown): UnderstandingState["evidenceStatus"] {
+  const safeValue = typeof value === "object" && value !== null ? value : {} as Record<string, unknown>
+
+  return {
+    strong: normalizeArray((safeValue as Record<string, unknown>).strong),
+    weak: normalizeArray((safeValue as Record<string, unknown>).weak),
+    missing: normalizeArray((safeValue as Record<string, unknown>).missing),
+  }
+}
+
+export function normalizeUnderstandingState(state: unknown): UnderstandingState {
+  const safeState = typeof state === "object" && state !== null ? state : {} as Record<string, unknown>
+
+  const needClarification = normalizeArray((safeState as Record<string, unknown>).needClarification)
+  const nextSteps = normalizeArray((safeState as Record<string, unknown>).nextSteps)
+
+  return {
+    currentPhase: normalizePhase((safeState as Record<string, unknown>).currentPhase),
+    phaseDescription: normalizeString((safeState as Record<string, unknown>).phaseDescription, "正在评估理解状态"),
+    mastered: normalizeArray((safeState as Record<string, unknown>).mastered),
+    needClarification: needClarification.map(normalizeNeedClarification),
+    evidenceStatus: normalizeEvidenceStatus((safeState as Record<string, unknown>).evidenceStatus),
+    nextSteps: nextSteps.map(normalizeNextStep),
+    lastUpdated: typeof (safeState as Record<string, unknown>).lastUpdated === "number"
+      ? (safeState as Record<string, unknown>).lastUpdated as number
+      : Date.now(),
+  }
+}
+
+export function normalizeKeyConcepts(concepts: unknown): KeyConcept[] {
+  const safeConcepts = normalizeArray(concepts)
+  return safeConcepts.map((concept, index) => normalizeKeyConcept(concept, index))
+}
+
+export function normalizeKnowledgeCards(cards: unknown): KnowledgeCard[] {
+  const safeCards = normalizeArray(cards)
+  return safeCards.map((card, index) => normalizeKnowledgeCard(card, index))
+}
+
+export function normalizeKnowledgeDocument(doc: unknown): KnowledgeDocument {
+  const safeDoc = typeof doc === "object" && doc !== null ? doc : {} as Record<string, unknown>
+
+  const keyConcepts = normalizeArray((safeDoc as Record<string, unknown>).keyConcepts)
+  const knowledgeCards = normalizeArray((safeDoc as Record<string, unknown>).knowledgeCards)
+
+  return {
+    id: normalizeString((safeDoc as Record<string, unknown>).id, `doc-${Date.now()}`),
+    pageKey: normalizeString((safeDoc as Record<string, unknown>).pageKey),
+    pageTitle: normalizeString((safeDoc as Record<string, unknown>).pageTitle, "未命名文档"),
+    pageUrl: normalizeString((safeDoc as Record<string, unknown>).pageUrl),
+    summary: normalizeString((safeDoc as Record<string, unknown>).summary),
+    keyConcepts: normalizeKeyConcepts(keyConcepts),
+    knowledgeCards: normalizeKnowledgeCards(knowledgeCards),
+    understandingState: (safeDoc as Record<string, unknown>).understandingState
+      ? normalizeUnderstandingState((safeDoc as Record<string, unknown>).understandingState)
+      : {
+          currentPhase: "introductory",
+          phaseDescription: "初始评估状态",
+          mastered: [],
+          needClarification: [],
+          evidenceStatus: { strong: [], weak: [], missing: [] },
+          nextSteps: [],
+          lastUpdated: Date.now(),
+        },
+    conversationRounds: normalizeArray((safeDoc as Record<string, unknown>).conversationRounds),
+    createdAt: typeof (safeDoc as Record<string, unknown>).createdAt === "number"
+      ? (safeDoc as Record<string, unknown>).createdAt as number
+      : Date.now(),
+    updatedAt: typeof (safeDoc as Record<string, unknown>).updatedAt === "number"
+      ? (safeDoc as Record<string, unknown>).updatedAt as number
+      : Date.now(),
+    version: typeof (safeDoc as Record<string, unknown>).version === "number"
+      ? (safeDoc as Record<string, unknown>).version as number
+      : 1,
+  }
+}
+
 const SUMMARY_SYSTEM_PROMPT = `你是一位专业的知识萃取专家，擅长从文档中提炼核心信息并生成高质量的摘要。
 
 ## 任务要求
@@ -266,12 +424,9 @@ async function generateKeyConcepts(
   const messages = createLLMMessages(KEY_CONCEPTS_SYSTEM_PROMPT, userContent)
   const response = await callLLM(config, messages, 3000)
   
-  const parsed = safeParseJSON<KeyConcept[]>(response, [])
+  const parsed = safeParseJSON<unknown[]>(response, [])
   
-  return parsed.map((concept, index) => ({
-    ...concept,
-    id: concept.id || `concept-${index}-${Date.now()}`,
-  }))
+  return normalizeKeyConcepts(parsed)
 }
 
 async function generateKnowledgeCards(
@@ -284,12 +439,9 @@ async function generateKnowledgeCards(
   const messages = createLLMMessages(KNOWLEDGE_CARDS_SYSTEM_PROMPT, userContent)
   const response = await callLLM(config, messages, 4000)
   
-  const parsed = safeParseJSON<KnowledgeCard[]>(response, [])
+  const parsed = safeParseJSON<unknown[]>(response, [])
   
-  return parsed.map((card, index) => ({
-    ...card,
-    id: card.id || `card-${index}-${Date.now()}`,
-  }))
+  return normalizeKnowledgeCards(parsed)
 }
 
 async function generateUnderstandingState(
@@ -313,12 +465,9 @@ async function generateUnderstandingState(
     lastUpdated: Date.now(),
   }
   
-  const parsed = safeParseJSON<UnderstandingState>(response, fallback)
+  const parsed = safeParseJSON<unknown>(response, fallback)
   
-  return {
-    ...parsed,
-    lastUpdated: Date.now(),
-  }
+  return normalizeUnderstandingState(parsed)
 }
 
 export interface GenerationProgress {
