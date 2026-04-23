@@ -47,7 +47,7 @@ function runTests(): TestResult[] {
   const summaryContent = "这是一个总结。你还有问题吗？"
   const validateSummaryResult = validateResponse(summaryContent, "summary")
   results.push(assertEqual(
-    validateSummaryResult.validation.issues.length > 0,
+    validateSummaryResult.issues.length > 0,
     true,
     "validateResponse: 总结模式检测到尾部问题"
   ))
@@ -55,7 +55,7 @@ function runTests(): TestResult[] {
   const singleQContent = "你觉得这个论点对吗？为什么？"
   const validateSingleQResult = validateResponse(singleQContent, "single_question")
   results.push(assertEqual(
-    validateSingleQResult.validation.issues.length > 0,
+    validateSingleQResult.issues.length > 0,
     true,
     "validateResponse: 单问题模式检测到多问题"
   ))

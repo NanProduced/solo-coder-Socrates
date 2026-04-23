@@ -249,6 +249,19 @@ export function buildSystemPrompt(mode: ConversationMode): string {
   return basePrompt
 }
 
+export function buildFullSystemPrompt(
+  mode: ConversationMode,
+  existingSystemContent?: string
+): string {
+  const basePrompt = buildSystemPrompt(mode)
+  
+  if (existingSystemContent && existingSystemContent.trim()) {
+    return basePrompt + "\n\n" + existingSystemContent
+  }
+  
+  return basePrompt
+}
+
 export async function callLLMStream(
   config: OpenAIConfig,
   messages: Message[],
@@ -264,20 +277,16 @@ export async function callLLMStream(
   const baseURL = config.baseURL.endsWith("/") ? config.baseURL : config.baseURL + "/"
   const url = baseURL + "chat/completions"
 
-  const systemMessage: Message = {
-    id: "system-" + Date.now(),
-    role: "system",
-    content: buildSystemPrompt(mode),
-    timestamp: Date.now(),
-    visible: false,
-  }
+  const existingSystemMessage = messages.find(m => m.role === "system")
+  
+  const fullSystemPrompt = buildFullSystemPrompt(
+    mode,
+    existingSystemMessage?.content
+  )
 
-  const messagesWithSystem = [
-    messages[0]?.role === "system" ? messages[0] : systemMessage,
-    ...(messages[0]?.role === "system" ? messages.slice(1) : messages),
-  ].filter(m => m.role !== "system" || m === messagesWithSystem[0])
+  const nonSystemMessages = messages.filter(m => m.role !== "system")
 
-  const apiMessages = messages.filter(m => m.role !== "system").map(m => ({
+  const apiMessages = nonSystemMessages.map(m => ({
     role: m.role,
     content: m.content
   }))
@@ -285,7 +294,7 @@ export async function callLLMStream(
   const requestBody = {
     model: config.model || "gpt-4o",
     messages: [
-      { role: "system", content: buildSystemPrompt(mode) },
+      { role: "system", content: fullSystemPrompt },
       ...apiMessages
     ],
     temperature,
@@ -383,7 +392,16 @@ export async function callLLMNonStream(
   const baseURL = config.baseURL.endsWith("/") ? config.baseURL : config.baseURL + "/"
   const url = baseURL + "chat/completions"
 
-  const apiMessages = messages.filter(m => m.role !== "system").map(m => ({
+  const existingSystemMessage = messages.find(m => m.role === "system")
+  
+  const fullSystemPrompt = buildFullSystemPrompt(
+    mode,
+    existingSystemMessage?.content
+  )
+
+  const nonSystemMessages = messages.filter(m => m.role !== "system")
+
+  const apiMessages = nonSystemMessages.map(m => ({
     role: m.role,
     content: m.content
   }))
@@ -395,9 +413,9 @@ export async function callLLMNonStream(
       "Authorization": `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      model: config.model || "g-4o",
+      model: config.model || "gpt-4o",
       messages: [
-        { role: "system", content: buildSystemPrompt(mode) },
+        { role: "system", content: fullSystemPrompt },
         ...apiMessages
       ],
       temperature,
