@@ -219,12 +219,50 @@ export function repairOutput(output: StructuredOutput): StructuredOutput {
   }
 }
 
+function isOptionLine(line: string): boolean {
+  const trimmed = line.trim()
+  for (const pattern of OPTION_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return true
+    }
+  }
+  return false
+}
+
+function removeOptionLines(text: string): string {
+  const lines = text.split("\n")
+  const filteredLines: string[] = []
+  let inOptionSection = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    
+    if (isOptionLine(trimmed)) {
+      inOptionSection = true
+      continue
+    }
+
+    if (inOptionSection && trimmed.length === 0) {
+      continue
+    }
+
+    if (inOptionSection && trimmed.length > 0 && !isOptionLine(trimmed)) {
+      inOptionSection = false
+    }
+
+    filteredLines.push(line)
+  }
+
+  return filteredLines.join("\n")
+}
+
 export function extractStreamingDisplay(accumulated: string): string {
   let display = accumulated
 
   display = display.replace(/<think[\s\S]*?<\/think>/g, "")
   display = display.replace(/<think[\s\S]*$/g, "")
   display = display.replace(/```(\w+)?\s*$/g, "")
+  display = removeOptionLines(display)
 
   return display.trim()
 }

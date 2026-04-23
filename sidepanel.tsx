@@ -1130,6 +1130,149 @@ function SidePanel() {
     }
   }
 
+  const handleSelectOption = async (option: string, assistantMessageId: string) => {
+    if (!activeRound || streamState.isStreaming) return
+
+    const userMessage: Message = {
+      id: generateId(),
+      role: "user",
+      content: option,
+      timestamp: Date.now(),
+      visible: true,
+      selectedOption: option
+    }
+
+    const currentRound = activeRound
+    const messagesAfterUser = [...currentRound.messages, userMessage]
+    const roundAfterUser: ConversationRound = {
+      ...currentRound,
+      messages: messagesAfterUser,
+      updatedAt: Date.now(),
+    }
+    const roundsAfterUser = rounds.map((r) =>
+      r.id === currentRound.id ? roundAfterUser : r
+    )
+
+    setRounds(roundsAfterUser)
+    setInput("")
+    setErrorMessage(null)
+    if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
+
+    const assistantId = generateId()
+    const placeholderMessage: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      visible: true,
+      isStreaming: true,
+    }
+
+    const roundWithPlaceholder: ConversationRound = {
+      ...roundAfterUser,
+      messages: [...messagesAfterUser, placeholderMessage],
+      updatedAt: Date.now(),
+    }
+    const roundsWithPlaceholder = roundsAfterUser.map((r) =>
+      r.id === currentRound.id ? roundWithPlaceholder : r
+    )
+    setRounds(roundsWithPlaceholder)
+
+    const abortController = new AbortController()
+    activeAbortRef.current = abortController
+    setStreamState({ isStreaming: true, abortController })
+    setIsLoading(true)
+
+    streamAccumulatedRef.current = ""
+    try {
+      const rawText = await callLLMStream(
+        config,
+        messagesAfterUser,
+        (chunk) => {
+          streamAccumulatedRef.current += chunk
+          const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
+          setRounds((prev) => {
+            const updated = prev.map((r) => {
+              if (r.id !== currentRound.id) return r
+              return {
+                ...r,
+                messages: r.messages.map((m) => {
+                  if (m.id !== assistantId) return m
+                  return {
+                    ...m,
+                    content: displayContent,
+                  }
+                }),
+              }
+            })
+            return updated
+          })
+        },
+        abortController.signal
+      )
+
+      const mode = "question"
+      const structured = validateOutput(rawText, mode)
+      const finalContent = formatStructuredContent(structured)
+
+      const finalMessage: Message = {
+        id: assistantId,
+        role: "assistant",
+        content: finalContent,
+        timestamp: Date.now(),
+        visible: true,
+        isStreaming: false,
+        structuredOutput: structured,
+      }
+
+      const messagesAfterAI = [...messagesAfterUser, finalMessage]
+      const roundAfterAI: ConversationRound = {
+        ...roundAfterUser,
+        messages: messagesAfterAI,
+        completed: false,
+        updatedAt: Date.now(),
+      }
+      const roundsAfterAI = roundsAfterUser.map((r) =>
+        r.id === currentRound.id ? roundAfterAI : r
+      )
+      await persistRounds(roundsAfterAI)
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        const partialMessage: Message = {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          timestamp: Date.now(),
+          visible: true,
+          isStreaming: false,
+        }
+        const partialRound: ConversationRound = {
+          ...roundAfterUser,
+          messages: [...messagesAfterUser, partialMessage],
+          updatedAt: Date.now(),
+        }
+        const partialRounds = roundsAfterUser.map((r) =>
+          r.id === currentRound.id ? partialRound : r
+        )
+        await persistRounds(partialRounds)
+      } else {
+        setErrorMessage(
+          error instanceof LLMError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "未知错误"
+        )
+      }
+    } finally {
+      if (activeAbortRef.current === abortController) {
+        activeAbortRef.current = null
+        setStreamState({ isStreaming: false, abortController: null })
+      }
+      setIsLoading(false)
+    }
+  }
+
   const handleSend = async () => {
     if (!input.trim() || !activeRound) return
 
@@ -1901,40 +2044,93 @@ function SidePanel() {
               </div>
             ) : (
               <div className="p-5 space-y-8 pb-32">
-                {displayMessages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
-                  >
-                    <div className={`flex gap-3 max-w-[95%] ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
-                      <div className={`w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center border shadow-sm ${
-                        message.role === "assistant" 
-                          ? "bg-notion-bg-secondary border-notion-border text-notion-accent" 
-                          : "bg-notion-text border-notion-text text-white"
-                      }`}>
-                        {message.role === "assistant" ? (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5h8M9 5v14m6-14v14" />
-                          </svg>
-                        ) : (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
-                        )}
+                {displayMessages.map((message, index) => {
+                  const nextMessage = displayMessages[index + 1]
+                  const hasOptions = message.role === "assistant" && message.structuredOutput?.options && message.structuredOutput.options.length > 0
+                  const selectedOption = nextMessage?.role === "user" ? nextMessage.selectedOption : null
+                  const canClickOptions = !isViewingHistory && !isRoundCompleted && !streamState.isStreaming && !selectedOption
+
+                  return (
+                    <div
+                      key={message.id}
+                      className={`flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
+                    >
+                      <div className={`flex gap-3 max-w-[95%] ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
+                        <div className={`w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center border shadow-sm ${
+                          message.role === "assistant" 
+                            ? "bg-notion-bg-secondary border-notion-border text-notion-accent" 
+                            : "bg-notion-text border-notion-text text-white"
+                        }`}>
+                          {message.role === "assistant" ? (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5h8M9 5v14m6-14v14" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className={`px-4 py-2.5 rounded-2xl ${
+                          message.role === "user"
+                            ? "bg-notion-accent text-white shadow-md shadow-notion-accent/10"
+                            : "bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm"
+                        }`}>
+                          <MarkdownMessage content={message.content} isUser={message.role === "user"} />
+                          {message.isStreaming && (
+                            <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
+                          )}
+                        </div>
                       </div>
-                      <div className={`px-4 py-2.5 rounded-2xl ${
-                        message.role === "user"
-                          ? "bg-notion-accent text-white shadow-md shadow-notion-accent/10"
-                          : "bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm"
-                      }`}>
-                        <MarkdownMessage content={message.content} isUser={message.role === "user"} />
-                        {message.isStreaming && (
-                          <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
-                        )}
-                      </div>
+                      
+                      {hasOptions && (
+                        <div className="mt-3 ml-10 flex flex-col gap-2 w-full max-w-[calc(100%-3rem)]">
+                          {message.structuredOutput!.options!.map((option, optIndex) => {
+                            const optionLabel = String.fromCharCode(65 + optIndex)
+                            const isSelected = selectedOption === option
+                            
+                            return (
+                              <button
+                                key={optIndex}
+                                onClick={() => {
+                                  if (canClickOptions) {
+                                    handleSelectOption(option, message.id)
+                                  }
+                                }}
+                                disabled={!canClickOptions}
+                                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all ${
+                                  isSelected
+                                    ? "bg-notion-accent/10 border-2 border-notion-accent text-notion-accent"
+                                    : canClickOptions
+                                    ? "bg-notion-bg-secondary border-2 border-transparent hover:border-notion-accent/30 hover:bg-notion-hover cursor-pointer"
+                                    : "bg-notion-bg-secondary/50 border-2 border-transparent opacity-60"
+                                }`}
+                              >
+                                <span className={`flex-shrink-0 w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold ${
+                                  isSelected
+                                    ? "bg-notion-accent text-white"
+                                    : "bg-notion-border/50 text-notion-text-secondary"
+                                }`}>
+                                  {optionLabel}
+                                </span>
+                                <span className={`text-sm flex-1 ${
+                                  isSelected ? "font-medium" : "text-notion-text"
+                                }`}>
+                                  {option}
+                                </span>
+                                {isSelected && (
+                                  <svg className="w-4 h-4 text-notion-accent flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {isLoading && !streamState.isStreaming && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
