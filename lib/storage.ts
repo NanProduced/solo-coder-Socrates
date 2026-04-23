@@ -1,9 +1,10 @@
 import { Storage } from "@plasmohq/storage"
-import { ConversationRound } from "./types"
+import { ConversationRound, KnowledgeDocument } from "./types"
 
 const storage = new Storage({ area: "local" })
 
 const CONVERSATION_KEY_PREFIX = "page-conversations:"
+const KNOWLEDGE_DOC_KEY_PREFIX = "knowledge-doc:"
 
 export function getPageConversationsKey(pageKey: string): string {
   return CONVERSATION_KEY_PREFIX + pageKey
@@ -113,4 +114,63 @@ export async function deleteAllConversations(): Promise<void> {
   if (keysToRemove.length > 0) {
     await chrome.storage.local.remove(keysToRemove)
   }
+}
+
+export function getKnowledgeDocKey(pageKey: string): string {
+  return KNOWLEDGE_DOC_KEY_PREFIX + pageKey
+}
+
+export async function loadKnowledgeDoc(pageKey: string): Promise<KnowledgeDocument | null> {
+  const key = getKnowledgeDocKey(pageKey)
+  const data = await storage.get<KnowledgeDocument>(key)
+  return data ?? null
+}
+
+export async function saveKnowledgeDoc(doc: KnowledgeDocument): Promise<void> {
+  const key = getKnowledgeDocKey(doc.pageKey)
+  await storage.set(key, doc)
+}
+
+export async function deleteKnowledgeDoc(pageKey: string): Promise<void> {
+  const key = getKnowledgeDocKey(pageKey)
+  await storage.remove(key)
+}
+
+export async function loadAllKnowledgeDocs(): Promise<KnowledgeDocument[]> {
+  const allData = await chrome.storage.local.get(null)
+  const docs: KnowledgeDocument[] = []
+
+  for (const [key, value] of Object.entries(allData)) {
+    if (key.startsWith(KNOWLEDGE_DOC_KEY_PREFIX)) {
+      try {
+        const parsed = typeof value === "string" ? JSON.parse(value) : value
+        if (parsed && parsed.id) {
+          docs.push(parsed as KnowledgeDocument)
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+
+  docs.sort((a, b) => b.updatedAt - a.updatedAt)
+  return docs
+}
+
+export async function updateKnowledgeDocVersion(
+  pageKey: string,
+  updates: Partial<KnowledgeDocument>
+): Promise<KnowledgeDocument | null> {
+  const existing = await loadKnowledgeDoc(pageKey)
+  if (!existing) return null
+
+  const updated: KnowledgeDocument = {
+    ...existing,
+    ...updates,
+    updatedAt: Date.now(),
+    version: existing.version + 1,
+  }
+
+  await saveKnowledgeDoc(updated)
+  return updated
 }

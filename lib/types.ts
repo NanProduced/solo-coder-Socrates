@@ -97,3 +97,60 @@ export function isSummaryRequest(content: string): boolean {
   if (/^总结[了啊吧]?$/i.test(lower.trim())) return true
   return false
 }
+
+export interface KeyConcept {
+  id: string
+  term: string
+  definition: string
+  importance: "core" | "important" | "supporting"
+  relationships?: string[]
+}
+
+export interface KnowledgeCard {
+  id: string
+  title: string
+  content: string
+  category: "definition" | "example" | "principle" | "relationship" | "application"
+  tags?: string[]
+  sourceReference?: string
+}
+
+export interface UnderstandingState {
+  currentPhase: "introductory" | "exploring" | "deepening" | "synthesizing" | "mastering"
+  phaseDescription: string
+  mastered: string[]
+  needClarification: {
+    concept: string
+    reason: string
+    priority: "high" | "medium" | "low"
+  }[]
+  evidenceStatus: {
+    strong: string[]
+    weak: string[]
+    missing: string[]
+  }
+  nextSteps: {
+    action: string
+    rationale: string
+    priority: "high" | "medium" | "low"
+  }[]
+  lastUpdated: number
+}
+
+export interface KnowledgeDocument {
+  id: string
+  pageKey: string
+  pageTitle: string
+  pageUrl: string
+  summary: string
+  keyConcepts: KeyConcept[]
+  knowledgeCards: KnowledgeCard[]
+  understandingState: UnderstandingState
+  conversationRounds: string[]
+  createdAt: number
+  updatedAt: number
+  version: number
+}
+
+export type KnowledgeDocStatus = "idle" | "generating" | "ready" | "error"
+export type GenerationStage = "summary" | "concepts" | "cards" | "understanding" | "export"
