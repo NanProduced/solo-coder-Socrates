@@ -10,10 +10,13 @@ export const DEFAULT_OPENAI_CONFIG: OpenAIConfig = {
   model: "gpt-4o"
 }
 
+export type ConversationMode = "free" | "guided"
+
 export interface StructuredOutput {
   mode: "question" | "summary"
   answer: string
   question: string
+  options?: string[]
 }
 
 export interface StreamState {
@@ -40,6 +43,7 @@ export interface ConversationRound {
   updatedAt: number
   pageTitle: string
   pageUrl: string
+  conversationMode?: ConversationMode
 }
 
 export const TRACKING_PARAMS: string[] = [

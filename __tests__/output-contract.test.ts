@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest"
 import {
   extractQuestions,
+  extractOptions,
   validateOutput,
   repairOutput,
   extractStreamingDisplay,
   formatStructuredContent,
+  formatDisplayContent,
 } from "../lib/output-contract"
 
 describe("extractQuestions", () => {
@@ -38,6 +40,95 @@ describe("extractQuestions", () => {
     const text = "你知道吗，这个概念其实很有趣。"
     const questions = extractQuestions(text)
     expect(questions.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe("extractOptions", () => {
+  it("extracts standard A) B) C) options", () => {
+    const text = "你认为递归的本质是什么？\n\nA) 函数调用自身\nB) 循环的语法糖\nC) 分而治之的策略"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(3)
+    expect(result.options[0]).toBe("函数调用自身")
+    expect(result.options[1]).toBe("循环的语法糖")
+    expect(result.options[2]).toBe("分而治之的策略")
+  })
+
+  it("extracts options with dot separator A. B.", () => {
+    const text = "问题？\nA. 选项一\nB. 选项二\nC. 选项三"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(3)
+  })
+
+  it("extracts options with Chinese separator A、B、", () => {
+    const text = "问题？\nA、选项一\nB、选项二"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(2)
+  })
+
+  it("returns empty for fewer than 2 options", () => {
+    const text = "问题？\nA) 唯一选项"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(0)
+    expect(result.cleanedText).toBe(text)
+  })
+
+  it("returns empty for text without options", () => {
+    const text = "这是一段没有选项的文本。"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(0)
+  })
+
+  it("removes option lines from cleaned text", () => {
+    const text = "你认为递归的本质是什么？\n\nA) 函数调用自身\nB) 循环的语法糖\n\n其他说明"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(2)
+    expect(result.cleanedText).not.toContain("A)")
+    expect(result.cleanedText).not.toContain("B)")
+    expect(result.cleanedText).toContain("你认为递归的本质是什么？")
+    expect(result.cleanedText).toContain("其他说明")
+  })
+
+  it("limits to 5 options max", () => {
+    const text = "问题？\nA) 一\nB) 二\nC) 三\nD) 四\nE) 五\nF) 六"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(5)
+  })
+
+  it("handles options with empty line between them", () => {
+    const text = "问题？\n\nA) 选项一\n\nB) 选项二\n\nC) 选项三"
+    const result = extractOptions(text)
+    expect(result.options).toHaveLength(3)
+  })
+})
+
+describe("validateOutput with guided mode", () => {
+  it("extracts options in guided mode", () => {
+    const text = "你认为递归的本质是什么？\n\nA) 函数调用自身\nB) 循环的语法糖\nC) 分而治之的策略"
+    const result = validateOutput(text, "question", "guided")
+    expect(result.options).toBeDefined()
+    expect(result.options!.length).toBe(3)
+    expect(result.question).toContain("递归")
+    expect(result.answer).not.toContain("A)")
+  })
+
+  it("does not extract options in free mode", () => {
+    const text = "你认为递归的本质是什么？\n\nA) 函数调用自身\nB) 循环的语法糖"
+    const result = validateOutput(text, "question", "free")
+    expect(result.options).toBeUndefined()
+  })
+
+  it("handles guided mode with no options gracefully", () => {
+    const text = "这是一个关于递归的问题。你觉得理解了吗？"
+    const result = validateOutput(text, "question", "guided")
+    expect(result.options).toBeUndefined()
+    expect(result.question).toBeTruthy()
+  })
+
+  it("summary mode never has options", () => {
+    const text = "总结内容\n\nA) 选项一\nB) 选项二"
+    const result = validateOutput(text, "summary", "guided")
+    expect(result.mode).toBe("summary")
+    expect(result.question).toBe("")
   })
 })
 
@@ -138,6 +229,39 @@ describe("repairOutput", () => {
     const questions = extractQuestions(repaired.question)
     expect(questions.length).toBeLessThanOrEqual(1)
   })
+
+  it("removes options in summary mode", () => {
+    const output = {
+      mode: "summary" as const,
+      answer: "总结",
+      question: "",
+      options: ["选项A", "选项B"],
+    }
+    const repaired = repairOutput(output)
+    expect(repaired.options).toBeUndefined()
+  })
+
+  it("removes options with fewer than 2 items", () => {
+    const output = {
+      mode: "question" as const,
+      answer: "回答",
+      question: "问题？",
+      options: ["唯一选项"],
+    }
+    const repaired = repairOutput(output)
+    expect(repaired.options).toBeUndefined()
+  })
+
+  it("limits options to 5", () => {
+    const output = {
+      mode: "question" as const,
+      answer: "回答",
+      question: "问题？",
+      options: ["A", "B", "C", "D", "E", "F"],
+    }
+    const repaired = repairOutput(output)
+    expect(repaired.options!.length).toBe(5)
+  })
 })
 
 describe("extractStreamingDisplay", () => {
@@ -199,5 +323,67 @@ describe("formatStructuredContent", () => {
     }
     const formatted = formatStructuredContent(output)
     expect(formatted).toBe("纯陈述内容")
+  })
+
+  it("formats options in question mode", () => {
+    const output = {
+      mode: "question" as const,
+      answer: "说明",
+      question: "问题？",
+      options: ["选项A", "选项B", "选项C"],
+    }
+    const formatted = formatStructuredContent(output)
+    expect(formatted).toContain("A) 选项A")
+    expect(formatted).toContain("B) 选项B")
+    expect(formatted).toContain("C) 选项C")
+  })
+
+  it("does not format options in summary mode", () => {
+    const output = {
+      mode: "summary" as const,
+      answer: "总结",
+      question: "",
+      options: ["选项A", "选项B"],
+    }
+    const formatted = formatStructuredContent(output)
+    expect(formatted).not.toContain("A)")
+  })
+})
+
+describe("formatDisplayContent", () => {
+  it("excludes options from display content", () => {
+    const output = {
+      mode: "question" as const,
+      answer: "说明",
+      question: "问题？",
+      options: ["选项A", "选项B"],
+    }
+    const display = formatDisplayContent(output)
+    expect(display).toContain("说明")
+    expect(display).toContain("❓")
+    expect(display).toContain("问题")
+    expect(display).not.toContain("A)")
+    expect(display).not.toContain("选项A")
+  })
+
+  it("matches formatStructuredContent when no options", () => {
+    const output = {
+      mode: "question" as const,
+      answer: "回答",
+      question: "问题？",
+    }
+    const display = formatDisplayContent(output)
+    const formatted = formatStructuredContent(output)
+    expect(display).toBe(formatted)
+  })
+
+  it("returns answer only for summary mode", () => {
+    const output = {
+      mode: "summary" as const,
+      answer: "总结内容",
+      question: "",
+    }
+    const display = formatDisplayContent(output)
+    expect(display).toBe("总结内容")
   })
 })

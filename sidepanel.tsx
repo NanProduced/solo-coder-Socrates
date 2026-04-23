@@ -5,6 +5,7 @@ import {
   DEFAULT_OPENAI_CONFIG,
   Message,
   ConversationRound,
+  ConversationMode,
   StreamState,
   generatePageKey,
   isSummaryRequest,
@@ -34,6 +35,7 @@ import {
   validateOutput,
   extractStreamingDisplay,
   formatStructuredContent,
+  formatDisplayContent,
 } from "./lib/output-contract"
 import "./style.css"
 
@@ -75,6 +77,47 @@ const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和
 - "我注意到你正在阅读一篇关于[主题]的文章。你觉得这篇文章试图告诉我们什么？"
 - "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
 - "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
+
+const SOCRATES_GUIDED_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。在引导模式下，你通过选择题来帮助学生理解文档内容。
+
+## 核心原则
+1. **每次只问一个问题** - 不要连续提出多个问题
+2. **必须提供选项** - 每个问题必须附带 2-5 个选项，格式严格为：
+   A) 选项文本
+   B) 选项文本
+   C) 选项文本
+   每行一个选项，使用大写字母 A-E 加右括号
+3. **选项设计要求**：
+   - 有且仅有一个最佳答案
+   - 干扰项要有迷惑性，基于常见误解
+   - 选项文本简洁，不超过 20 字
+   - 不要使用"以上都对"或"以上都不对"作为选项
+4. **动态调整难度**：
+   - 用户选对 → 肯定回答，追问更深入的选择题
+   - 用户选错 → 不直接否定，引导思考为什么其他选项更合适，出新选择题
+   - 连续答对 → 可以出综合理解题
+5. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
+6. **总结模式禁止出选项** - 总结时只输出总结文本
+
+## 对话流程
+1. 开始时，基于文档内容出一个关于核心主题的选择题
+2. 根据用户的选择，判断理解程度，调整下一个问题
+3. 持续深入，直到用户真正理解核心概念
+
+## 回答要求
+- 温和的语气，像苏格拉底那样对话
+- 你的回复将被程序解析，选项格式必须严格遵循上述约定
+- 每个问题后必须紧跟选项，选项与问题之间空一行
+- 如果用户正在阅读中文文档，用中文提问
+- 如果用户正在阅读英文文档，可以用英文或中文
+
+## 示例输出
+这篇文章讨论了递归的核心思想。你认为递归的本质是什么？
+
+A) 函数调用自身
+B) 循环的语法糖
+C) 分而治之的策略
+D) 栈的操作`
 
 const escapeHtml = (text: string): string => {
   return text
@@ -857,7 +900,7 @@ function SidePanel() {
     setConfirmClearAll(false)
   }
 
-  const startConversation = async () => {
+  const startConversation = async (mode: ConversationMode = "free") => {
     if (!hasConfig) {
       chrome.runtime.openOptionsPage()
       return
@@ -906,10 +949,12 @@ function SidePanel() {
 
       const roundId = generateId()
 
+      const systemPrompt = mode === "guided" ? SOCRATES_GUIDED_PROMPT : SOCRATES_SYSTEM_PROMPT
+
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
-        content: SOCRATES_SYSTEM_PROMPT + "\n\n" + contextPrompt,
+        content: systemPrompt + "\n\n" + contextPrompt,
         timestamp: Date.now(),
         visible: false
       }
@@ -931,6 +976,7 @@ function SidePanel() {
         updatedAt: Date.now(),
         pageTitle: pageInfo.title || pageTitle,
         pageUrl: pageInfo.url || pageUrl,
+        conversationMode: mode,
       }
 
       const newRounds = [...rounds, newRound]
@@ -992,8 +1038,10 @@ function SidePanel() {
           abortController.signal
         )
 
-        const structured = validateOutput(rawText, "question")
-        const finalContent = formatStructuredContent(structured)
+        const structured = validateOutput(rawText, "question", mode)
+        const finalContent = structured.options?.length
+          ? formatDisplayContent(structured)
+          : formatStructuredContent(structured)
 
         const finalMessage: Message = {
           id: assistantId,
@@ -1058,8 +1106,9 @@ function SidePanel() {
     }
   }
 
-  const handleSend = async () => {
-    if (!input.trim() || !activeRound) return
+  const handleSend = async (overrideText?: string) => {
+    const textToSend = (overrideText || input).trim()
+    if (!textToSend || !activeRound) return
 
     if (streamState.isStreaming) {
       abortCurrentStream()
@@ -1068,12 +1117,12 @@ function SidePanel() {
     const userMessage: Message = {
       id: generateId(),
       role: "user",
-      content: input.trim(),
+      content: textToSend,
       timestamp: Date.now(),
       visible: true
     }
 
-    const shouldComplete = isSummaryRequest(input.trim())
+    const shouldComplete = isSummaryRequest(textToSend)
     const currentRound = activeRound
     const messagesAfterUser = [...currentRound.messages, userMessage]
     const roundAfterUser: ConversationRound = {
@@ -1144,8 +1193,10 @@ function SidePanel() {
       )
 
       const mode = shouldComplete ? "summary" : "question"
-      const structured = validateOutput(rawText, mode)
-      const finalContent = formatStructuredContent(structured)
+      const structured = validateOutput(rawText, mode, currentRound.conversationMode)
+      const finalContent = structured.options?.length
+        ? formatDisplayContent(structured)
+        : formatStructuredContent(structured)
 
       const finalMessage: Message = {
         id: assistantId,
@@ -1297,8 +1348,10 @@ function SidePanel() {
         abortController.signal
       )
 
-      const structured = validateOutput(rawText, "summary")
-      const finalContent = formatStructuredContent(structured)
+      const structured = validateOutput(rawText, "summary", currentRound.conversationMode)
+      const finalContent = structured.options?.length
+        ? formatDisplayContent(structured)
+        : formatStructuredContent(structured)
 
       const finalMessage: Message = {
         id: assistantId,
@@ -1442,7 +1495,7 @@ function SidePanel() {
             <div className="flex items-center gap-1.5">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse flex-shrink-0" />
               <span className="text-[10px] font-medium text-notion-text-secondary truncate">
-                {isViewingHistory ? "查看历史对话" : "在线思辨中"}
+                {isViewingHistory ? "查看历史对话" : (viewingRound?.conversationMode === "guided" ? "引导模式 · 在线" : "思辨模式 · 在线")}
               </span>
             </div>
           </div>
@@ -1738,14 +1791,34 @@ function SidePanel() {
                   导师苏格拉底已准备好引导你深入理解此文档。他不会直接给你答案，但会启发你的智慧。
                 </p>
 
-                <button
-                  onClick={startConversation}
-                  disabled={streamState.isStreaming}
-                  className="group relative px-10 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
-                >
-                  {streamState.isStreaming ? "正在生成回复..." : isLoading ? "正在读取心智..." : "开始阅读引导"}
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
-                </button>
+                <div className="flex gap-3 w-full max-w-xs">
+                  <button
+                    onClick={() => startConversation("free")}
+                    disabled={streamState.isStreaming || isLoading}
+                    className="flex-1 group relative px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <div className="flex flex-col items-center gap-1">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                      <span className="text-xs">思辨模式</span>
+                      <span className="text-[10px] opacity-70">自由输入</span>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => startConversation("guided")}
+                    disabled={streamState.isStreaming || isLoading}
+                    className="flex-1 group relative px-4 py-3 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl font-bold shadow-sm hover:bg-notion-hover transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <div className="flex flex-col items-center gap-1">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                      <span className="text-xs">引导模式</span>
+                      <span className="text-[10px] opacity-70">选择题</span>
+                    </div>
+                  </button>
+                </div>
 
                 {latestIncompleteRound && latestIncompleteRound.id !== activeRoundId && (
                   <button
@@ -1841,6 +1914,28 @@ function SidePanel() {
                         {message.isStreaming && (
                           <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
                         )}
+                        {!message.isStreaming && message.structuredOutput?.options && message.structuredOutput.options.length >= 2 && !isRoundCompleted && (
+                          <div className="mt-3 flex flex-col gap-1.5">
+                            {message.structuredOutput.options.map((option, idx) => {
+                              const labels = ["A", "B", "C", "D", "E"]
+                              return (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    if (!streamState.isStreaming) {
+                                      handleSend(option)
+                                    }
+                                  }}
+                                  disabled={streamState.isStreaming}
+                                  className="w-full text-left px-3 py-2 rounded-lg border border-notion-border/50 bg-notion-bg hover:bg-notion-hover hover:border-notion-accent/30 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed group/option"
+                                >
+                                  <span className="text-notion-accent font-medium mr-2 group-hover/option:scale-110 inline-block transition-transform">{labels[idx]})</span>
+                                  <span className="text-notion-text">{option}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1913,7 +2008,7 @@ function SidePanel() {
                   }}
                 />
                 <button
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   disabled={!input.trim()}
                   className={`p-2 rounded-xl transition-all ${
                     input.trim()

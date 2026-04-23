@@ -21,6 +21,8 @@ const QUESTION_PATTERNS = [
   /could you/i,
 ]
 
+const OPTION_LINE_PATTERN = /^([A-F])[).、）]\s*(.+)$/
+
 function splitIntoSentences(text: string): string[] {
   return text
     .split(/(?<=[。！？!?])\s*|(?<=\n)\s*/)
@@ -46,6 +48,82 @@ export function extractQuestions(text: string): string[] {
   return questions
 }
 
+export interface ExtractedOptions {
+  options: string[]
+  cleanedText: string
+}
+
+export function extractOptions(text: string): ExtractedOptions {
+  const lines = text.split("\n")
+  const optionLines: { index: number; letter: string; text: string }[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    const match = trimmed.match(OPTION_LINE_PATTERN)
+    if (match) {
+      optionLines.push({
+        index: i,
+        letter: match[1].toUpperCase(),
+        text: match[2].trim(),
+      })
+    }
+  }
+
+  if (optionLines.length < 2) {
+    return { options: [], cleanedText: text }
+  }
+
+  let consecutiveCount = 1
+  let bestStart = 0
+  let bestEnd = 0
+  let currentStart = 0
+
+  for (let i = 1; i < optionLines.length; i++) {
+    const lineGap = optionLines[i].index - optionLines[i - 1].index
+    if (lineGap <= 2) {
+      consecutiveCount++
+      if (consecutiveCount > bestEnd - bestStart + 1) {
+        bestStart = currentStart
+        bestEnd = i
+      }
+    } else {
+      currentStart = i
+      consecutiveCount = 1
+    }
+  }
+
+  if (bestEnd === 0 && optionLines.length >= 2) {
+    bestEnd = optionLines.length - 1
+  }
+
+  const selectedOptions = optionLines.slice(bestStart, bestEnd + 1)
+  const options = selectedOptions.map((o) => o.text).slice(0, 5)
+
+  const removedLineIndices = new Set<number>()
+  for (let i = selectedOptions[0].index; i <= selectedOptions[selectedOptions.length - 1].index; i++) {
+    removedLineIndices.add(i)
+  }
+  for (let i = selectedOptions[0].index - 1; i >= 0; i--) {
+    if (lines[i].trim() === "") {
+      removedLineIndices.add(i)
+    } else {
+      break
+    }
+  }
+  for (let i = selectedOptions[selectedOptions.length - 1].index + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "") {
+      removedLineIndices.add(i)
+    } else {
+      break
+    }
+  }
+
+  const cleanedLines = lines.filter((_, i) => !removedLineIndices.has(i))
+  const cleanedText = cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+
+  return { options, cleanedText }
+}
+
 function removeSentenceFromText(text: string, sentence: string): string {
   const escaped = sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   return text.replace(new RegExp(escaped + "\\s*"), "").trim()
@@ -53,7 +131,8 @@ function removeSentenceFromText(text: string, sentence: string): string {
 
 export function validateOutput(
   raw: string,
-  mode: "question" | "summary"
+  mode: "question" | "summary",
+  conversationMode?: "free" | "guided"
 ): StructuredOutput {
   const trimmed = raw.trim()
 
@@ -65,10 +144,9 @@ export function validateOutput(
     }
   }
 
-  const questions = extractQuestions(trimmed)
-
   if (mode === "summary") {
     let answer = trimmed
+    const questions = extractQuestions(trimmed)
     for (const q of questions) {
       answer = removeSentenceFromText(answer, q)
     }
@@ -83,16 +161,27 @@ export function validateOutput(
     }
   }
 
+  const { options, cleanedText } = conversationMode === "guided"
+    ? extractOptions(trimmed)
+    : { options: [] as string[], cleanedText: trimmed }
+
+  const textForQuestionExtraction = options.length > 0 ? cleanedText : trimmed
+  const questions = extractQuestions(textForQuestionExtraction)
+
   if (questions.length <= 1) {
+    const answer = questions.length === 0
+      ? textForQuestionExtraction
+      : removeSentenceFromText(textForQuestionExtraction, questions[0]).replace(/\n{3,}/g, "\n\n").trim()
     return {
       mode: "question",
-      answer: questions.length === 0 ? trimmed : removeSentenceFromText(trimmed, questions[0]).replace(/\n{3,}/g, "\n\n").trim(),
+      answer: answer || textForQuestionExtraction,
       question: questions[0] || "",
+      options: options.length >= 2 ? options : undefined,
     }
   }
 
   const keptQuestion = questions[0]
-  let answer = trimmed
+  let answer = textForQuestionExtraction
   for (let i = 1; i < questions.length; i++) {
     answer = removeSentenceFromText(answer, questions[i])
   }
@@ -100,8 +189,9 @@ export function validateOutput(
 
   return {
     mode: "question",
-    answer: answer || removeSentenceFromText(trimmed, keptQuestion).replace(/\n{3,}/g, "\n\n").trim(),
+    answer: answer || removeSentenceFromText(textForQuestionExtraction, keptQuestion).replace(/\n{3,}/g, "\n\n").trim(),
     question: keptQuestion,
+    options: options.length >= 2 ? options : undefined,
   }
 }
 
@@ -128,7 +218,18 @@ export function repairOutput(output: StructuredOutput): StructuredOutput {
     }
   }
 
-  return { mode, answer: answer.trim(), question: question.trim() }
+  let options = output.options
+  if (mode === "summary") {
+    options = undefined
+  }
+  if (options && options.length < 2) {
+    options = undefined
+  }
+  if (options && options.length > 5) {
+    options = options.slice(0, 5)
+  }
+
+  return { mode, answer: answer.trim(), question: question.trim(), options }
 }
 
 export function extractStreamingDisplay(accumulated: string): string {
@@ -142,6 +243,21 @@ export function extractStreamingDisplay(accumulated: string): string {
 }
 
 export function formatStructuredContent(output: StructuredOutput): string {
+  if (output.mode === "summary" || !output.question) {
+    return output.answer
+  }
+
+  let content = output.answer + "\n\n---\n\n❓ " + output.question
+
+  if (output.options && output.options.length >= 2) {
+    const labels = ["A", "B", "C", "D", "E"]
+    content += "\n\n" + output.options.map((opt, i) => `${labels[i]}) ${opt}`).join("\n")
+  }
+
+  return content
+}
+
+export function formatDisplayContent(output: StructuredOutput): string {
   if (output.mode === "summary" || !output.question) {
     return output.answer
   }
