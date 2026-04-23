@@ -16,7 +16,8 @@ function buildApiUrl(baseURL: string): string {
 function buildRequestBody(
   config: OpenAIConfig,
   messages: Message[],
-  stream: boolean = false
+  stream: boolean = false,
+  maxTokens: number = 1500
 ): string {
   return JSON.stringify({
     model: config.model || "gpt-4o",
@@ -25,7 +26,7 @@ function buildRequestBody(
       content: m.content,
     })),
     temperature: 0.7,
-    max_tokens: 1500,
+    max_tokens: maxTokens,
     stream,
   })
 }
@@ -49,7 +50,8 @@ export class LLMError extends Error {
 
 export async function callLLM(
   config: OpenAIConfig,
-  messages: Message[]
+  messages: Message[],
+  maxTokens: number = 1500
 ): Promise<string> {
   if (!config.apiKey || !config.baseURL) {
     throw new LLMError("请先配置 API 参数")
@@ -59,7 +61,7 @@ export async function callLLM(
   const response = await fetch(url, {
     method: "POST",
     headers: buildHeaders(config.apiKey),
-    body: buildRequestBody(config, messages, false),
+    body: buildRequestBody(config, messages, false, maxTokens),
   })
 
   if (!response.ok) {

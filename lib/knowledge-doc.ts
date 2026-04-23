@@ -230,7 +230,7 @@ async function generateSummary(
 ): Promise<string> {
   const userContent = buildContextContent(pageTitle, pageUrl, pageContent, conversationRounds)
   const messages = createLLMMessages(SUMMARY_SYSTEM_PROMPT, userContent)
-  return await callLLM(config, messages)
+  return await callLLM(config, messages, 2000)
 }
 
 function safeParseJSON<T>(text: string, fallback: T): T {
@@ -264,7 +264,7 @@ async function generateKeyConcepts(
 ): Promise<KeyConcept[]> {
   const userContent = buildContextContent(pageTitle, pageUrl, pageContent)
   const messages = createLLMMessages(KEY_CONCEPTS_SYSTEM_PROMPT, userContent)
-  const response = await callLLM(config, messages)
+  const response = await callLLM(config, messages, 3000)
   
   const parsed = safeParseJSON<KeyConcept[]>(response, [])
   
@@ -282,7 +282,7 @@ async function generateKnowledgeCards(
 ): Promise<KnowledgeCard[]> {
   const userContent = buildContextContent(pageTitle, pageUrl, pageContent)
   const messages = createLLMMessages(KNOWLEDGE_CARDS_SYSTEM_PROMPT, userContent)
-  const response = await callLLM(config, messages)
+  const response = await callLLM(config, messages, 4000)
   
   const parsed = safeParseJSON<KnowledgeCard[]>(response, [])
   
@@ -301,7 +301,7 @@ async function generateUnderstandingState(
 ): Promise<UnderstandingState> {
   const userContent = buildContextContent(pageTitle, pageUrl, pageContent, conversationRounds)
   const messages = createLLMMessages(UNDERSTANDING_STATE_SYSTEM_PROMPT, userContent)
-  const response = await callLLM(config, messages)
+  const response = await callLLM(config, messages, 4000)
   
   const fallback: UnderstandingState = {
     currentPhase: "introductory",
@@ -342,7 +342,8 @@ export async function generateKnowledgeDocument(
   pageContent: string,
   conversationRounds: ConversationRound[] = [],
   onProgress?: (progress: GenerationProgress) => void,
-  existingDoc?: KnowledgeDocument | null
+  existingDoc?: KnowledgeDocument | null,
+  forceRegenerate: boolean = false
 ): Promise<GenerationResult> {
   const progress: GenerationProgress[] = []
   const errors: string[] = []
@@ -357,7 +358,7 @@ export async function generateKnowledgeDocument(
     const [summaryResult, conceptsResult, cardsResult, understandingResult] = await Promise.allSettled([
       (async () => {
         notifyProgress("summary", false)
-        const summary = existingDoc?.summary && existingDoc.summary.length > 0 
+        const summary = !forceRegenerate && existingDoc?.summary && existingDoc.summary.length > 0 
           ? existingDoc.summary 
           : await generateSummary(config, pageTitle, pageUrl, pageContent, conversationRounds)
         notifyProgress("summary", true)
@@ -365,7 +366,7 @@ export async function generateKnowledgeDocument(
       })(),
       (async () => {
         notifyProgress("concepts", false)
-        const concepts = existingDoc?.keyConcepts && existingDoc.keyConcepts.length > 0 
+        const concepts = !forceRegenerate && existingDoc?.keyConcepts && existingDoc.keyConcepts.length > 0 
           ? existingDoc.keyConcepts 
           : await generateKeyConcepts(config, pageTitle, pageUrl, pageContent)
         notifyProgress("concepts", true)
@@ -373,7 +374,7 @@ export async function generateKnowledgeDocument(
       })(),
       (async () => {
         notifyProgress("cards", false)
-        const cards = existingDoc?.knowledgeCards && existingDoc?.knowledgeCards.length > 0 
+        const cards = !forceRegenerate && existingDoc?.knowledgeCards && existingDoc?.knowledgeCards.length > 0 
           ? existingDoc.knowledgeCards 
           : await generateKnowledgeCards(config, pageTitle, pageUrl, pageContent)
         notifyProgress("cards", true)
@@ -489,7 +490,7 @@ export async function exportToMarkdown(
 ${docContent}`
 
   const messages = createLLMMessages(EXPORT_MARKDOWN_SYSTEM_PROMPT, userContent)
-  return await callLLM(config, messages)
+  return await callLLM(config, messages, 8000)
 }
 
 export async function updateUnderstandingStateFromConversation(

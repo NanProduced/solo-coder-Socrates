@@ -782,6 +782,7 @@ function SidePanel() {
       setPageKey(key)
       setPageUrl(tabUrl)
       setPageTitle(tab.title ?? "")
+      setPageContentCache("")
 
       const [loadedRounds, loadedDoc] = await Promise.all([
         loadPageConversations(key),
@@ -1404,6 +1405,39 @@ function SidePanel() {
         r.id === currentRound.id ? roundAfterAI : r
       )
       await persistRounds(roundsAfterAI)
+
+      if (knowledgeDoc && hasConfig) {
+        try {
+          let contentToUse = pageContentCache
+          if (!contentToUse) {
+            const pageInfo = await getPageContent()
+            if (pageInfo.content) {
+              contentToUse = pageInfo.content
+              setPageContentCache(contentToUse)
+            }
+          }
+
+          if (contentToUse) {
+            const newState = await updateUnderstandingStateFromConversation(
+              config,
+              knowledgeDoc,
+              contentToUse,
+              roundsAfterAI
+            )
+
+            const updatedDoc = await updateKnowledgeDocVersion(pageKey, {
+              understandingState: newState,
+              conversationRounds: roundsAfterAI.map(r => r.id),
+            })
+
+            if (updatedDoc) {
+              setKnowledgeDoc(updatedDoc)
+            }
+          }
+        } catch (updateError) {
+          console.warn("更新理解状态失败:", updateError)
+        }
+      }
     } catch (error) {
       if (abortController.signal.aborted) {
         const partialMessage: Message = {
@@ -1517,6 +1551,8 @@ function SidePanel() {
 
       setPageContentCache(pageInfo.content)
 
+      const isRegenerate = !!knowledgeDoc
+
       const result = await generateKnowledgeDocument(
         config,
         pageKey,
@@ -1527,7 +1563,8 @@ function SidePanel() {
         (progress) => {
           setGenerationProgress((prev) => [...prev, progress])
         },
-        knowledgeDoc
+        knowledgeDoc,
+        isRegenerate
       )
 
       if (result.document) {
@@ -2387,47 +2424,75 @@ function SidePanel() {
       ) : (
         <>
           <div className="flex-1 overflow-y-auto scrollbar-thin">
-            {knowledgeDoc?.understandingState && !isViewingHistory && conversationStarted && (
-              <div
-                className="px-4 py-3 border-b border-notion-border cursor-pointer hover:bg-notion-hover/50 transition-colors"
-                onClick={() => {
-                  setShowUnderstandingDetail(true)
-                }}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`px-2.5 py-1 rounded-lg ${getPhaseBgColor(knowledgeDoc.understandingState.currentPhase)}`}>
-                    <span className={`text-[10px] font-bold ${getPhaseColor(knowledgeDoc.understandingState.currentPhase)}`}>
-                      {getPhaseLabel(knowledgeDoc.understandingState.currentPhase)}
-                    </span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    {knowledgeDoc.understandingState.mastered.length > 0 && (
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <svg className="w-3 h-3 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span className="text-[10px] text-notion-text-secondary truncate">
-                          已掌握 {knowledgeDoc.understandingState.mastered.slice(0, 3).join("、")}
-                          {knowledgeDoc.understandingState.mastered.length > 3 && ` 等 ${knowledgeDoc.understandingState.mastered.length} 个概念`}
+            {!isViewingHistory && conversationStarted && (
+              <div className="border-b border-notion-border">
+                {knowledgeDoc?.understandingState ? (
+                  <div
+                    className="px-4 py-3 cursor-pointer hover:bg-notion-hover/50 transition-colors bg-notion-accent/5"
+                    onClick={() => {
+                      setShowUnderstandingDetail(true)
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-[10px] font-bold text-notion-accent uppercase tracking-wider">学习状态</span>
+                      <span className="text-[9px] text-notion-text-secondary">点击查看详情</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`px-3 py-1.5 rounded-lg ${getPhaseBgColor(knowledgeDoc.understandingState.currentPhase)}`}>
+                        <span className={`text-[11px] font-bold ${getPhaseColor(knowledgeDoc.understandingState.currentPhase)}`}>
+                          {getPhaseLabel(knowledgeDoc.understandingState.currentPhase)}
                         </span>
                       </div>
-                    )}
-                    {knowledgeDoc.understandingState.needClarification.length > 0 && (
-                      <div className="flex items-center gap-1.5">
-                        <svg className="w-3 h-3 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        <span className="text-[10px] text-notion-text-secondary truncate">
-                          待澄清 {knowledgeDoc.understandingState.needClarification[0]?.concept}
-                          {knowledgeDoc.understandingState.needClarification.length > 1 && ` 等 ${knowledgeDoc.understandingState.needClarification.length} 个`}
-                        </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-notion-text-secondary line-clamp-1">
+                          {knowledgeDoc.understandingState.phaseDescription}
+                        </p>
+                        {knowledgeDoc.understandingState.mastered.length > 0 && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400">
+                              <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                              <span className="text-[9px] font-medium">已掌握 {knowledgeDoc.understandingState.mastered.length}</span>
+                            </span>
+                            {knowledgeDoc.understandingState.needClarification.length > 0 && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">
+                                <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                <span className="text-[9px] font-medium">待澄清 {knowledgeDoc.understandingState.needClarification.length}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    )}
+                      <svg className="w-4 h-4 text-notion-text-secondary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
                   </div>
-                  <svg className="w-4 h-4 text-notion-text-secondary flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
+                ) : (
+                  <div className="px-4 py-3 bg-notion-bg-secondary">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <svg className="w-4 h-4 text-notion-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <div>
+                          <p className="text-[11px] font-medium text-notion-text">开始学习追踪</p>
+                          <p className="text-[9px] text-notion-text-secondary">生成知识文档后自动追踪理解状态</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={generateKnowledgeDocHandler}
+                        disabled={knowledgeDocStatus === "generating"}
+                        className="px-3 py-1.5 bg-notion-accent text-white text-[10px] font-medium rounded-lg hover:bg-notion-accent-hover transition-colors disabled:opacity-50"
+                      >
+                        {knowledgeDocStatus === "generating" ? "生成中..." : "生成知识文档"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
