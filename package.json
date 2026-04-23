@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
-    "package": "plasmo package"
+    "package": "plasmo package",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
@@ -25,7 +27,8 @@
     "autoprefixer": "10.4.20",
     "postcss": "8.4.49",
     "tailwindcss": "3.4.14",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "vitest": "^4.1.5"
   },
   "manifest": {
     "host_permissions": [
@@ -41,8 +44,12 @@
     ],
     "web_accessible_resources": [
       {
-        "resources": ["assets/pdf.worker.min.js"],
-        "matches": ["<all_urls>"]
+        "resources": [
+          "assets/pdf.worker.min.js"
+        ],
+        "matches": [
+          "<all_urls>"
+        ]
       }
     ]
   }

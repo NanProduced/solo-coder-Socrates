@@ -5,6 +5,7 @@ import {
   DEFAULT_OPENAI_CONFIG,
   Message,
   ConversationRound,
+  StreamState,
   generatePageKey,
   isSummaryRequest,
 } from "./lib/types"
@@ -28,18 +29,25 @@ import {
   buildContextPrompt,
   type ContentMeta,
 } from "./lib/content-utils"
+import { callLLMStream, LLMError } from "./lib/llm"
+import {
+  validateOutput,
+  extractStreamingDisplay,
+  formatStructuredContent,
+} from "./lib/output-contract"
 import "./style.css"
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
 
 ## 核心原则
-1. **一次只问一个问题** - 不要连续提出多个问题
+1. **一次只问一个问题** - 不要连续提出多个问题，每轮回复只能包含一个问句
 2. **动态调整深度**：
    - 如果用户回答正确/深入，追问更深入的问题
    - 如果用户回答偏离主题，换个角度重新提问
    - 如果用户表示不懂，给出线索或提示性问题
 3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
 4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
+5. **总结模式绝对禁止追问** - 当进入总结模式时，只输出总结内容，不要提出任何问题
 
 ## 对话流程
 1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题
@@ -53,6 +61,7 @@ const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和
 - 不要说教，要引导
 - 如果用户正在阅读的是中文文档，请用中文提问和对话
 - 如果用户正在阅读的是英文文档，可以用英文或中文对话
+- 你的回复将被程序解析校验，请确保问题清晰可辨，问句使用问号结尾
 
 ## 开始对话
 当用户开始对话时，请根据用户正在阅读的文档内容，提出一个苏格拉底式的引导问题。不要使用固定的模板，要根据实际内容来提问。
@@ -74,13 +83,6 @@ const escapeHtml = (text: string): string => {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
-}
-
-const stripThinkTags = (content: string): string => {
-  return content
-    .replace(/<think[\s\S]*?<\/think>/g, "")
-    .replace(/<think[\s\S]*$/g, "")
-    .trim()
 }
 
 const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
@@ -208,6 +210,10 @@ function SidePanel() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [streamState, setStreamState] = useState<StreamState>({
+    isStreaming: false,
+    abortController: null,
+  })
   const [hasConfig, setHasConfig] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [pageTitle, setPageTitle] = useState("")
@@ -218,6 +224,8 @@ function SidePanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activeAbortRef = useRef<AbortController | null>(null)
+  const streamAccumulatedRef = useRef("")
   const pageKeyRef = useRef("")
 
   useEffect(() => {
@@ -621,43 +629,14 @@ function SidePanel() {
     return { title: "", content: "", url: "", contextPrompt: "", error: "无法提取页面内容，可能是浏览器限制页面" }
   }
 
-  const callOpenAI = async (msgs: Message[]): Promise<string> => {
-    if (!config.apiKey || !config.baseURL) {
-      throw new Error("请先配置 API 参数")
+  const abortCurrentStream = useCallback(() => {
+    if (streamState.abortController) {
+      streamState.abortController.abort()
+      activeAbortRef.current = null
+      setStreamState({ isStreaming: false, abortController: null })
     }
-
-    const baseURL = config.baseURL.endsWith("/") ? config.baseURL : config.baseURL + "/"
-    const url = baseURL + "chat/completions"
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.apiKey}`
-      },
-      body: JSON.stringify({
-        model: config.model || "gpt-4o",
-        messages: msgs.map(m => ({
-          role: m.role,
-          content: m.content
-        })),
-        temperature: 0.7,
-        max_tokens: 1500
-      })
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      throw new Error(errorData.error?.message || `API 错误: ${response.status}`)
-    }
-
-    const data = await response.json()
-    let content = data.choices[0]?.message?.content || ""
-
-    content = stripThinkTags(content)
-
-    return content
-  }
+    setIsLoading(false)
+  }, [streamState.abortController])
 
   const persistRounds = async (newRounds: ConversationRound[]) => {
     setRounds(newRounds)
@@ -943,35 +922,131 @@ function SidePanel() {
       setViewingRoundId(null)
       if (pageKey) await savePageConversations(pageKey, newRounds)
 
-      const aiResponse = await callOpenAI([initialMessage, firstUserMessage])
-
-      const assistantMessage: Message = {
-        id: generateId(),
+      const assistantId = generateId()
+      const placeholderMessage: Message = {
+        id: assistantId,
         role: "assistant",
-        content: aiResponse,
+        content: "",
         timestamp: Date.now(),
-        visible: true
+        visible: true,
+        isStreaming: true,
       }
 
-      const updatedRound: ConversationRound = {
+      const roundWithPlaceholder: ConversationRound = {
         ...newRound,
-        messages: [initialMessage, firstUserMessage, assistantMessage],
+        messages: [initialMessage, firstUserMessage, placeholderMessage],
         updatedAt: Date.now(),
       }
-
-      const updatedRounds = newRounds.map((r) =>
-        r.id === roundId ? updatedRound : r
+      const roundsWithPlaceholder = newRounds.map((r) =>
+        r.id === roundId ? roundWithPlaceholder : r
       )
-      await persistRounds(updatedRounds)
+      setRounds(roundsWithPlaceholder)
+
+      const abortController = new AbortController()
+      activeAbortRef.current = abortController
+      setStreamState({ isStreaming: true, abortController })
+      setIsLoading(true)
+
+      streamAccumulatedRef.current = ""
+      try {
+        const rawText = await callLLMStream(
+          config,
+          [initialMessage, firstUserMessage],
+          (chunk) => {
+            streamAccumulatedRef.current += chunk
+            const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
+            setRounds((prev) => {
+              const updated = prev.map((r) => {
+                if (r.id !== roundId) return r
+                return {
+                  ...r,
+                  messages: r.messages.map((m) => {
+                    if (m.id !== assistantId) return m
+                    return {
+                      ...m,
+                      content: displayContent,
+                    }
+                  }),
+                }
+              })
+              return updated
+            })
+          },
+          abortController.signal
+        )
+
+        const structured = validateOutput(rawText, "question")
+        const finalContent = formatStructuredContent(structured)
+
+        const finalMessage: Message = {
+          id: assistantId,
+          role: "assistant",
+          content: finalContent,
+          timestamp: Date.now(),
+          visible: true,
+          isStreaming: false,
+          structuredOutput: structured,
+        }
+
+        const updatedRound: ConversationRound = {
+          ...newRound,
+          messages: [initialMessage, firstUserMessage, finalMessage],
+          updatedAt: Date.now(),
+        }
+
+        const updatedRounds = newRounds.map((r) =>
+          r.id === roundId ? updatedRound : r
+        )
+        await persistRounds(updatedRounds)
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          const partialMessage: Message = {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            timestamp: Date.now(),
+            visible: true,
+            isStreaming: false,
+          }
+          const partialRound: ConversationRound = {
+            ...newRound,
+            messages: [initialMessage, firstUserMessage, partialMessage],
+            updatedAt: Date.now(),
+          }
+          const partialRounds = newRounds.map((r) =>
+            r.id === roundId ? partialRound : r
+          )
+          await persistRounds(partialRounds)
+        } else {
+          setErrorMessage(
+            error instanceof LLMError
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : "未知错误"
+          )
+        }
+      } finally {
+        if (activeAbortRef.current === abortController) {
+          activeAbortRef.current = null
+          setStreamState({ isStreaming: false, abortController: null })
+        }
+        setIsLoading(false)
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "未知错误")
-    } finally {
+      setErrorMessage(
+        error instanceof Error ? error.message : "未知错误"
+      )
       setIsLoading(false)
     }
   }
 
   const handleSend = async () => {
-    if (!input.trim() || isLoading || !activeRound) return
+    if (!input.trim() || !activeRound) return
+
+    if (streamState.isStreaming) {
+      abortCurrentStream()
+    }
 
     const userMessage: Message = {
       id: generateId(),
@@ -995,21 +1070,77 @@ function SidePanel() {
 
     setRounds(roundsAfterUser)
     setInput("")
-    setIsLoading(true)
     setErrorMessage(null)
     if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
+    const assistantId = generateId()
+    const placeholderMessage: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      visible: true,
+      isStreaming: true,
+    }
+
+    const roundWithPlaceholder: ConversationRound = {
+      ...roundAfterUser,
+      messages: [...messagesAfterUser, placeholderMessage],
+      updatedAt: Date.now(),
+    }
+    const roundsWithPlaceholder = roundsAfterUser.map((r) =>
+      r.id === currentRound.id ? roundWithPlaceholder : r
+    )
+    setRounds(roundsWithPlaceholder)
+
+    const abortController = new AbortController()
+    activeAbortRef.current = abortController
+    setStreamState({ isStreaming: true, abortController })
+    setIsLoading(true)
+
+    streamAccumulatedRef.current = ""
     try {
-      const response = await callOpenAI(messagesAfterUser)
-      const assistantMessage: Message = {
-        id: generateId(),
+      const rawText = await callLLMStream(
+        config,
+        messagesAfterUser,
+        (chunk) => {
+          streamAccumulatedRef.current += chunk
+          const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
+          setRounds((prev) => {
+            const updated = prev.map((r) => {
+              if (r.id !== currentRound.id) return r
+              return {
+                ...r,
+                messages: r.messages.map((m) => {
+                  if (m.id !== assistantId) return m
+                  return {
+                    ...m,
+                    content: displayContent,
+                  }
+                }),
+              }
+            })
+            return updated
+          })
+        },
+        abortController.signal
+      )
+
+      const mode = shouldComplete ? "summary" : "question"
+      const structured = validateOutput(rawText, mode)
+      const finalContent = formatStructuredContent(structured)
+
+      const finalMessage: Message = {
+        id: assistantId,
         role: "assistant",
-        content: response,
+        content: finalContent,
         timestamp: Date.now(),
-        visible: true
+        visible: true,
+        isStreaming: false,
+        structuredOutput: structured,
       }
 
-      const messagesAfterAI = [...messagesAfterUser, assistantMessage]
+      const messagesAfterAI = [...messagesAfterUser, finalMessage]
       const roundAfterAI: ConversationRound = {
         ...roundAfterUser,
         messages: messagesAfterAI,
@@ -1021,14 +1152,48 @@ function SidePanel() {
       )
       await persistRounds(roundsAfterAI)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "未知错误")
+      if (abortController.signal.aborted) {
+        const partialMessage: Message = {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          timestamp: Date.now(),
+          visible: true,
+          isStreaming: false,
+        }
+        const partialRound: ConversationRound = {
+          ...roundAfterUser,
+          messages: [...messagesAfterUser, partialMessage],
+          updatedAt: Date.now(),
+        }
+        const partialRounds = roundsAfterUser.map((r) =>
+          r.id === currentRound.id ? partialRound : r
+        )
+        await persistRounds(partialRounds)
+      } else {
+        setErrorMessage(
+          error instanceof LLMError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "未知错误"
+        )
+      }
     } finally {
+      if (activeAbortRef.current === abortController) {
+        activeAbortRef.current = null
+        setStreamState({ isStreaming: false, abortController: null })
+      }
       setIsLoading(false)
     }
   }
 
   const handleSummarize = async () => {
-    if (isLoading || !activeRound || activeRound.messages.length === 0) return
+    if (!activeRound || activeRound.messages.length === 0) return
+
+    if (streamState.isStreaming) {
+      abortCurrentStream()
+    }
 
     const userActionMessage: Message = {
       id: generateId(),
@@ -1041,7 +1206,7 @@ function SidePanel() {
     const internalInstruction: Message = {
       id: generateId(),
       role: "user",
-      content: "用户现在希望总结我们的对话和文档的核心内容。请提供一个简洁、清晰的总结，包括：1) 文档的核心主题，2) 我们讨论过的关键点，3) 主要的理解收获。",
+      content: "用户现在希望总结我们的对话和文档的核心内容。请提供一个简洁、清晰的总结，包括：1) 文档的核心主题，2) 我们讨论过的关键点，3) 主要的理解收获。注意：这是总结模式，绝对不要提出任何问题。",
       timestamp: Date.now(),
       visible: false
     }
@@ -1058,22 +1223,77 @@ function SidePanel() {
     )
 
     setRounds(roundsAfterUser)
-    setIsLoading(true)
     setErrorMessage(null)
     if (pageKey) await savePageConversations(pageKey, roundsAfterUser)
 
+    const assistantId = generateId()
+    const placeholderMessage: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      visible: true,
+      isStreaming: true,
+    }
+
+    const roundWithPlaceholder: ConversationRound = {
+      ...roundAfterUser,
+      messages: [...messagesWithUserAction, placeholderMessage],
+      updatedAt: Date.now(),
+    }
+    const roundsWithPlaceholder = roundsAfterUser.map((r) =>
+      r.id === currentRound.id ? roundWithPlaceholder : r
+    )
+    setRounds(roundsWithPlaceholder)
+
+    const abortController = new AbortController()
+    activeAbortRef.current = abortController
+    setStreamState({ isStreaming: true, abortController })
+    setIsLoading(true)
+
+    streamAccumulatedRef.current = ""
     try {
       const messagesForAI = [...currentRound.messages, internalInstruction]
-      const response = await callOpenAI(messagesForAI)
-      const assistantMessage: Message = {
-        id: generateId(),
+      const rawText = await callLLMStream(
+        config,
+        messagesForAI,
+        (chunk) => {
+          streamAccumulatedRef.current += chunk
+          const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
+          setRounds((prev) => {
+            const updated = prev.map((r) => {
+              if (r.id !== currentRound.id) return r
+              return {
+                ...r,
+                messages: r.messages.map((m) => {
+                  if (m.id !== assistantId) return m
+                  return {
+                    ...m,
+                    content: displayContent,
+                  }
+                }),
+              }
+            })
+            return updated
+          })
+        },
+        abortController.signal
+      )
+
+      const structured = validateOutput(rawText, "summary")
+      const finalContent = formatStructuredContent(structured)
+
+      const finalMessage: Message = {
+        id: assistantId,
         role: "assistant",
-        content: response,
+        content: finalContent,
         timestamp: Date.now(),
-        visible: true
+        visible: true,
+        isStreaming: false,
+        structuredOutput: structured,
       }
 
-      const messagesAfterAI = [...messagesWithUserAction, assistantMessage]
+      const messagesAfterAI = [...messagesWithUserAction, finalMessage]
       const roundAfterAI: ConversationRound = {
         ...roundAfterUser,
         messages: messagesAfterAI,
@@ -1085,8 +1305,38 @@ function SidePanel() {
       )
       await persistRounds(roundsAfterAI)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "未知错误")
+      if (abortController.signal.aborted) {
+        const partialMessage: Message = {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          timestamp: Date.now(),
+          visible: true,
+          isStreaming: false,
+        }
+        const partialRound: ConversationRound = {
+          ...roundAfterUser,
+          messages: [...messagesWithUserAction, partialMessage],
+          updatedAt: Date.now(),
+        }
+        const partialRounds = roundsAfterUser.map((r) =>
+          r.id === currentRound.id ? partialRound : r
+        )
+        await persistRounds(partialRounds)
+      } else {
+        setErrorMessage(
+          error instanceof LLMError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "未知错误"
+        )
+      }
     } finally {
+      if (activeAbortRef.current === abortController) {
+        activeAbortRef.current = null
+        setStreamState({ isStreaming: false, abortController: null })
+      }
       setIsLoading(false)
     }
   }
@@ -1094,7 +1344,9 @@ function SidePanel() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      if (!streamState.isStreaming) {
+        handleSend()
+      }
     }
   }
 
@@ -1163,7 +1415,7 @@ function SidePanel() {
           {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
             <button
               onClick={handleSummarize}
-              disabled={isLoading}
+              disabled={streamState.isStreaming}
               className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-30"
               title="总结当前对话"
             >
@@ -1452,10 +1704,10 @@ function SidePanel() {
 
                 <button
                   onClick={startConversation}
-                  disabled={isLoading}
+                  disabled={streamState.isStreaming}
                   className="group relative px-10 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
                 >
-                  {isLoading ? "正在读取心智..." : "开始阅读引导"}
+                  {streamState.isStreaming ? "正在生成回复..." : isLoading ? "正在读取心智..." : "开始阅读引导"}
                   <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-notion-bg" />
                 </button>
 
@@ -1550,11 +1802,14 @@ function SidePanel() {
                           : "bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm"
                       }`}>
                         <MarkdownMessage content={message.content} isUser={message.role === "user"} />
+                        {message.isStreaming && (
+                          <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
+                        )}
                       </div>
                     </div>
                   </div>
                 ))}
-                {isLoading && (
+                {isLoading && !streamState.isStreaming && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
                       <div className="flex gap-1">
@@ -1593,6 +1848,18 @@ function SidePanel() {
 
           {conversationStarted && !isRoundCompleted && !isViewingHistory && (
             <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+              {streamState.isStreaming ? (
+                <button
+                  onClick={abortCurrentStream}
+                  className="w-full px-4 py-2.5 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl text-sm font-medium hover:bg-notion-hover transition-all flex items-center justify-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                  </svg>
+                  停止生成
+                </button>
+              ) : (
               <div className="relative flex items-end gap-2 bg-notion-bg-secondary rounded-2xl border border-notion-border p-2 focus-within:border-notion-accent/50 focus-within:ring-4 focus-within:ring-notion-accent/5 transition-all">
                 <textarea
                   ref={inputRef}
@@ -1611,9 +1878,9 @@ function SidePanel() {
                 />
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim() || isLoading}
+                  disabled={!input.trim()}
                   className={`p-2 rounded-xl transition-all ${
-                    input.trim() && !isLoading
+                    input.trim()
                       ? "bg-notion-accent text-white shadow-lg shadow-notion-accent/20"
                       : "bg-notion-bg text-notion-text-secondary opacity-30"
                   }`}
@@ -1623,6 +1890,7 @@ function SidePanel() {
                   </svg>
                 </button>
               </div>
+              )}
             </div>
           )}
 

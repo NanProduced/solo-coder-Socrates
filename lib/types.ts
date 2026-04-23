@@ -10,12 +10,25 @@ export const DEFAULT_OPENAI_CONFIG: OpenAIConfig = {
   model: "gpt-4o"
 }
 
+export interface StructuredOutput {
+  mode: "question" | "summary"
+  answer: string
+  question: string
+}
+
+export interface StreamState {
+  isStreaming: boolean
+  abortController: AbortController | null
+}
+
 export interface Message {
   id: string
   role: "user" | "assistant" | "system"
   content: string
   timestamp: number
   visible: boolean
+  structuredOutput?: StructuredOutput
+  isStreaming?: boolean
 }
 
 export interface ConversationRound {
