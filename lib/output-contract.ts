@@ -45,21 +45,23 @@ function extractOptionsFromLine(line: string): string | null {
 }
 
 function extractOptions(text: string): string[] {
-  const lines = text.split("\n").map((s) => s.trim()).filter((s) => s.length > 0)
+  let searchText = text
+  
+  const separatorIndex = text.indexOf(OPTIONS_SEPARATOR)
+  if (separatorIndex !== -1) {
+    searchText = text.substring(separatorIndex + OPTIONS_SEPARATOR.length)
+  }
+
+  const lines = searchText.split("\n").map((s) => s.trim()).filter((s) => s.length > 0)
   const options: string[] = []
-  let inOptionSection = false
 
   for (const line of lines) {
     const option = extractOptionsFromLine(line)
     if (option) {
-      inOptionSection = true
       if (!options.includes(option)) {
         options.push(option)
       }
-    } else if (inOptionSection) {
-      if (!QUESTION_PATTERNS.some((p) => p.test(line))) {
-        continue
-      }
+    } else if (options.length > 0) {
       break
     }
   }
@@ -71,6 +73,11 @@ function extractOptions(text: string): string[] {
 }
 
 function removeOptionsFromText(text: string): string {
+  const separatorIndex = text.indexOf(OPTIONS_SEPARATOR)
+  if (separatorIndex !== -1) {
+    return text.substring(0, separatorIndex).trim()
+  }
+
   const lines = text.split("\n")
   const filteredLines: string[] = []
   let inOptionSection = false
@@ -219,6 +226,23 @@ export function repairOutput(output: StructuredOutput): StructuredOutput {
   }
 }
 
+const OPTIONS_SEPARATOR = "--- OPTIONS ---"
+
+function stripAfterSeparator(text: string): string {
+  const separatorIndex = text.indexOf(OPTIONS_SEPARATOR)
+  if (separatorIndex !== -1) {
+    return text.substring(0, separatorIndex)
+  }
+  
+  const partialSeparator = "--- OPT"
+  const partialIndex = text.indexOf(partialSeparator)
+  if (partialIndex !== -1 && partialIndex + partialSeparator.length >= text.length) {
+    return text.substring(0, partialIndex)
+  }
+  
+  return text
+}
+
 function isOptionLine(line: string): boolean {
   const trimmed = line.trim()
   for (const pattern of OPTION_PATTERNS) {
@@ -230,6 +254,11 @@ function isOptionLine(line: string): boolean {
 }
 
 function removeOptionLines(text: string): string {
+  const separatorIndex = text.indexOf(OPTIONS_SEPARATOR)
+  if (separatorIndex !== -1) {
+    return text.substring(0, separatorIndex)
+  }
+  
   const lines = text.split("\n")
   const filteredLines: string[] = []
   let inOptionSection = false
@@ -262,7 +291,7 @@ export function extractStreamingDisplay(accumulated: string): string {
   display = display.replace(/<think[\s\S]*?<\/think>/g, "")
   display = display.replace(/<think[\s\S]*$/g, "")
   display = display.replace(/```(\w+)?\s*$/g, "")
-  display = removeOptionLines(display)
+  display = stripAfterSeparator(display)
 
   return display.trim()
 }
