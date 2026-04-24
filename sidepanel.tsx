@@ -28,6 +28,8 @@ import {
 } from "./lib/storage"
 import { KnowledgePanel } from "./components/KnowledgePanel"
 import { KnowledgeLibraryPanel } from "./components/KnowledgeLibraryPanel"
+import { MarkdownMessage } from "./components/MarkdownMessage"
+import { UnderstandingStatusBar } from "./components/UnderstandingStatusBar"
 import {
   extractPdfFromUrl,
   extractPdfViaInjection,
@@ -55,307 +57,23 @@ import {
   getCompressedBeforeMessageId,
   getCompressedRoundCount,
 } from "./lib/context-compress"
+import {
+  SOCRATES_SYSTEM_PROMPT,
+  SOCRATES_GUIDED_PROMPT,
+  STATUS_UPDATE_PROMPT,
+  SUMMARY_PROMPT,
+  CONCEPTS_CARDS_PROMPT,
+  DOC_STATUS_PROMPT,
+  EXPORT_PROMPT,
+} from "./lib/prompts"
+import {
+  parseLLMJson,
+  downloadMarkdown,
+  formatTime,
+  formatDateGroup,
+  extractHostname,
+} from "./lib/utils"
 import "./style.css"
-
-const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
-
-## 核心原则
-1. **一次只问一个问题** - 不要连续提出多个问题，每轮回复只能包含一个问句
-2. **动态调整深度**：
-   - 如果用户回答正确/深入，追问更深入的问题
-   - 如果用户回答偏离主题，换个角度重新提问
-   - 如果用户表示不懂，给出线索或提示性问题
-3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
-4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
-5. **总结模式绝对禁止追问** - 当进入总结模式时，只输出总结内容，不要提出任何问题
-
-## 对话流程
-1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题
-2. 根据用户的回答，判断理解程度，调整下一个问题
-3. 持续深入，直到用户真正理解核心概念
-
-## 回答要求
-- 像苏格拉底那样对话，使用温和的语气
-- 提出的问题要能激发批判性思考
-- 当用户说"总结"或"帮我总结"时，才提供简洁的总结
-- 不要说教，要引导
-- 如果用户正在阅读的是中文文档，请用中文提问和对话
-- 如果用户正在阅读的是英文文档，可以用英文或中文对话
-- 你的回复将被程序解析校验，请确保问题清晰可辨，问句使用问号结尾
-
-## 开始对话
-当用户开始对话时，请根据用户正在阅读的文档内容，提出一个苏格拉底式的引导问题。不要使用固定的模板，要根据实际内容来提问。
-
-你的第一个问题应该：
-- 基于文档的核心主题或标题
-- 鼓励用户思考文档的主要目的
-- 温和而好奇的语气
-
-例如（根据实际内容调整）：
-- "我注意到你正在阅读一篇关于[主题]的文章。你觉得这篇文章试图告诉我们什么？"
-- "这篇文档的标题是[标题]。在你开始阅读之前，你对这个主题有什么预先的理解吗？"
-- "我看到你正在阅读一份[类型]文档。你认为这份文档的核心论点可能是什么？"`
-
-const SOCRATES_GUIDED_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。在引导模式下，你通过选择题来帮助学生理解文档内容。
-
-## 核心原则
-1. **每次只问一个问题** - 不要连续提出多个问题
-2. **必须提供选项** - 每个问题必须附带 2-5 个选项，格式严格为：
-   A) 选项文本
-   B) 选项文本
-   C) 选项文本
-   每行一个选项，使用大写字母 A-E 加右括号
-3. **选项设计要求**：
-   - 有且仅有一个最佳答案
-   - 干扰项要有迷惑性，基于常见误解
-   - 选项文本简洁，不超过 20 字
-   - 不要使用"以上都对"或"以上都不对"作为选项
-4. **动态调整难度**：
-   - 用户选对 → 肯定回答，追问更深入的选择题
-   - 用户选错 → 不直接否定，引导思考为什么其他选项更合适，出新选择题
-   - 连续答对 → 可以出综合理解题
-5. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
-6. **总结模式禁止出选项** - 总结时只输出总结文本
-
-## 对话流程
-1. 开始时，基于文档内容出一个关于核心主题的选择题
-2. 根据用户的选择，判断理解程度，调整下一个问题
-3. 持续深入，直到用户真正理解核心概念
-
-## 回答要求
-- 温和的语气，像苏格拉底那样对话
-- 你的回复将被程序解析，选项格式必须严格遵循上述约定
-- 每个问题后必须紧跟选项，选项与问题之间空一行
-- 如果用户正在阅读中文文档，用中文提问
-- 如果用户正在阅读英文文档，可以用英文或中文
-
-## 示例输出
-这篇文章讨论了递归的核心思想。你认为递归的本质是什么？
-
-A) 函数调用自身
-B) 循环的语法糖
-C) 分而治之的策略
-D) 栈的操作`
-
-const STATUS_UPDATE_PROMPT = `你是一个学习状态分析器。根据以下对话历史，评估用户对文档的理解状态。
-
-请以 JSON 格式输出（不要包含 markdown 代码块标记）：
-{
-  "currentStage": "当前学习阶段，使用以下之一：初步接触 | 建立框架 | 深入理解 | 融会贯通",
-  "mastered": ["已掌握的知识点1", "已掌握的知识点2"],
-  "pendingClarification": ["待澄清的问题1", "待澄清的问题2"],
-  "evidenceStatus": "对已掌握内容的理解信心：低 | 中 | 高",
-  "nextThinkingDirection": "建议用户下一步思考的方向"
-}
-
-要求：
-- currentStage 必须从四个阶段中选择最匹配的
-- mastered 列出用户已展现出理解的知识点
-- pendingClarification 列出对话中暴露出的理解盲区
-- evidenceStatus 基于用户回答的深度和准确性判断信心等级
-- nextThinkingDirection 给出具体的、可操作的思考方向`
-
-const SUMMARY_PROMPT = `你是一个知识文档生成器。请为以下文档内容生成一份精炼的摘要。
-
-要求：
-- 摘要应涵盖文档的核心主题、主要论点和关键结论
-- 长度控制在 150-300 字
-- 语言精炼，避免冗余
-- 直接输出摘要文本，不要添加标题或前缀`
-
-const CONCEPTS_CARDS_PROMPT = `你是一个知识文档生成器。请根据以下文档内容和对话历史，提取关键概念并生成知识卡片。
-
-请以 JSON 格式输出（不要包含 markdown 代码块标记）：
-{
-  "keyConcepts": [
-    { "name": "概念名称", "description": "概念简述（1-2句话）" }
-  ],
-  "knowledgeCards": [
-    {
-      "concept": "概念名称",
-      "explanation": "一句话解释",
-      "keyPoints": ["要点1", "要点2", "要点3"]
-    }
-  ]
-}
-
-要求：
-- 提取 3-8 个关键概念
-- 每个概念都需要对应一张知识卡片
-- keyPoints 每张卡片 2-4 条
-- 要点应包含：定义、核心特征、典型应用或常见误区
-- 结合对话历史中用户已讨论过的内容，优先处理用户关注的概念`
-
-const DOC_STATUS_PROMPT = `你是一个学习状态分析器。根据以下完整的对话历史，生成一份全面的理解状态评估。
-
-请以 JSON 格式输出（不要包含 markdown 代码块标记）：
-{
-  "currentStage": "当前学习阶段：初步接触 | 建立框架 | 深入理解 | 融会贯通",
-  "mastered": ["已掌握的知识点"],
-  "pendingClarification": ["待澄清的问题"],
-  "evidenceStatus": "理解信心描述（需比自动更新更详细，50-100字）",
-  "nextThinkingDirection": "下一步思考方向（需比自动更新更具体，50-100字）"
-}
-
-要求：
-- 这是知识文档的正式评估，需要比实时跟踪更全面深入
-- mastered 应包含所有对话中展现出的理解
-- pendingClarification 应包含所有未解决的疑问
-- evidenceStatus 需要详细描述对用户理解的信心及依据
-- nextThinkingDirection 需要给出具体的、可操作的学习建议`
-
-const EXPORT_PROMPT = `你是一个知识文档编辑器。请将以下知识文档内容润色为一份结构清晰、语言流畅的 Markdown 文档。
-
-要求：
-- 使用恰当的 Markdown 格式（标题、列表、引用、粗体等）
-- 语言流畅自然，像一篇精心编写的读书笔记
-- 保持信息完整性的同时提升可读性
-- 在文档末尾添加"学习状态"章节
-- 不要添加原文中没有的信息，但可以优化表达方式
-- 直接输出 Markdown 文本，不要包含代码块标记`
-
-const parseLLMJson = (text: string): any => {
-  let cleaned = text.trim()
-  const codeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
-  if (codeBlockMatch) {
-    cleaned = codeBlockMatch[1].trim()
-  }
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    cleaned = jsonMatch[0]
-  }
-  return JSON.parse(cleaned)
-}
-
-const downloadMarkdown = (content: string, filename?: string) => {
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = `${filename || "知识文档"}.md`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-const escapeHtml = (text: string): string => {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
-}
-
-const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
-  const renderedHTML = useMemo(() => {
-    let html = content
-
-    const codeBlocks: string[] = []
-    html = html.replace(/```(\w+)?\s*\n([\s\S]*?)\n```/g, (match, lang, code) => {
-      codeBlocks.push(escapeHtml(code))
-      return `__CODE_BLOCK_${codeBlocks.length - 1}__`
-    })
-
-    const inlineCodes: string[] = []
-    html = html.replace(/`([^`]+)`/g, (match, code) => {
-      inlineCodes.push(escapeHtml(code))
-      return `__INLINE_CODE_${inlineCodes.length - 1}__`
-    })
-
-    html = escapeHtml(html)
-
-    html = html.replace(/^#\s+(.+)$/gm, '<h1 class="text-lg font-bold mb-3 mt-4">$1</h1>')
-    html = html.replace(/^##\s+(.+)$/gm, '<h2 class="text-base font-bold mb-2 mt-3">$1</h2>')
-    html = html.replace(/^###\s+(.+)$/gm, '<h3 class="text-sm font-bold mb-2 mt-2">$1</h3>')
-
-    html = html.replace(/^[-*+]\s+(.+)$/gm, '<li class="text-sm">$1</li>')
-    html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul class="list-disc pl-4 mb-2 space-y-1">$&</ul>')
-
-    html = html.replace(/^\d+\.\s+(.+)$/gm, '<li class="text-sm">$1</li>')
-    html = html.replace(/(<li.*<\/li>\n?)+/g, (match) => {
-      if (match.includes('class="list-disc')) return match
-      return `<ol class="list-decimal pl-4 mb-2 space-y-1">${match}</ol>`
-    })
-
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="font-bold">$1</strong>')
-    html = html.replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
-
-    html = html.replace(/^&gt;\s+(.+)$/gm, (match, text) => {
-      return `<blockquote class="border-l-2 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
-    })
-
-    html = html.replace(/\n\n/g, '</p><p class="mb-2 last:mb-0">')
-    html = html.replace(/\n/g, '<br/>')
-
-    if (html && !html.startsWith('<')) {
-      html = '<p class="mb-2 last:mb-0">' + html + '</p>'
-    }
-
-    html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
-      const code = inlineCodes[parseInt(index)]
-      const bgClass = isUser ? 'bg-white/20' : 'bg-notion-bg-secondary text-notion-text'
-      return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
-    })
-
-    html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
-      const code = codeBlocks[parseInt(index)]
-      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-notion-bg-secondary text-notion-text text-xs font-mono overflow-x-auto">${code}</code></pre>`
-    })
-
-    return html
-  }, [content, isUser])
-
-  return (
-    <div
-      className="text-sm leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: renderedHTML }}
-    />
-  )
-}
-
-const formatTime = (timestamp: number): string => {
-  const date = new Date(timestamp)
-  const now = new Date()
-  const isToday = date.toDateString() === now.toDateString()
-  if (isToday) {
-    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-  }
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) {
-    return "昨天 " + date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
-  }
-  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })
-}
-
-const formatDateGroup = (timestamp: number): string => {
-  const date = new Date(timestamp)
-  const now = new Date()
-  if (date.toDateString() === now.toDateString()) return "今天"
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return "昨天"
-  const sevenDaysAgo = new Date(now)
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  if (date >= sevenDaysAgo) return "最近七天"
-  const thirtyDaysAgo = new Date(now)
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-  if (date >= thirtyDaysAgo) return "最近三十天"
-  return "更早"
-}
-
-const extractHostname = (url: string): string => {
-  try {
-    const urlObj = new URL(url)
-    if (urlObj.protocol === "file:") {
-      const filename = urlObj.pathname.split("/").pop() || ""
-      return filename ? decodeURIComponent(filename) : "本地文件"
-    }
-    return urlObj.hostname
-  } catch {
-    return url
-  }
-}
 
 function SidePanel() {
   const [config] = useStorage<OpenAIConfig>("openai-config", DEFAULT_OPENAI_CONFIG)
@@ -895,6 +613,7 @@ function SidePanel() {
       await saveUnderstandingStatus(currentKey, status)
       setUnderstandingStatus(status)
     } catch {
+      // 状态更新失败不影响主流程，静默处理
     } finally {
       setIsUpdatingStatus(false)
     }
@@ -1062,7 +781,8 @@ function SidePanel() {
       try {
         const docs = await loadAllKnowledgeDocuments()
         setAllKnowledgeDocs(docs)
-      } catch {
+      } catch (err) {
+        setErrorMessage(err instanceof Error ? err.message : "加载知识库失败")
       } finally {
         setIsLoadingLibrary(false)
       }
@@ -1106,7 +826,8 @@ function SidePanel() {
       } catch {
         downloadMarkdown(rawMarkdown, knowledgeDoc.pageTitle)
       }
-    } catch {
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "导出失败")
     } finally {
       setIsExporting(false)
     }
@@ -1117,7 +838,8 @@ function SidePanel() {
     try {
       const docs = await loadAllKnowledgeDocuments()
       setAllKnowledgeDocs(docs)
-    } catch {
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "加载知识库失败")
     } finally {
       setIsLoadingLibrary(false)
     }
@@ -1139,9 +861,13 @@ function SidePanel() {
   }, [loadAllDocs])
 
   const handleDeleteDocs = useCallback(async (pageKeys: string[]) => {
-    await deleteKnowledgeDocuments(pageKeys)
-    setAllKnowledgeDocs((prev) => prev.filter((d) => !pageKeys.includes(d.pageKey)))
-    setCrossDocAnalysis(null)
+    try {
+      await deleteKnowledgeDocuments(pageKeys)
+      setAllKnowledgeDocs((prev) => prev.filter((d) => !pageKeys.includes(d.pageKey)))
+      setCrossDocAnalysis(null)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "删除文档失败")
+    }
   }, [])
 
   const handleExportAllDocs = useCallback(async () => {
@@ -1186,7 +912,8 @@ function SidePanel() {
       } catch {
         downloadMarkdown(rawMarkdown, `知识库总览_${dateStr}`)
       }
-    } catch {
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "导出失败")
     } finally {
       setIsExportingAll(false)
     }
@@ -1230,8 +957,9 @@ suggestedPath 使用文档标题。`
 
       const analysis = parseLLMJson(result) as CrossDocAnalysis
       setCrossDocAnalysis(analysis)
-    } catch {
+    } catch (err) {
       setCrossDocAnalysis(null)
+      setErrorMessage(err instanceof Error ? err.message : "关联分析失败")
     } finally {
       setIsAnalyzingRelations(false)
     }
@@ -2680,61 +2408,12 @@ suggestedPath 使用文档标题。`
           {conversationStarted && !isRoundCompleted && !isViewingHistory && (
             <div className="border-t border-notion-border bg-notion-bg">
               {understandingStatus && !showKnowledgePanel && (
-                <div className="px-4 pt-3">
-                  <button
-                    onClick={() => setShowStatusDetail(!showStatusDetail)}
-                    className="w-full text-left"
-                  >
-                    <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
-                      <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
-                      <span className="text-green-600 dark:text-green-400">✓{understandingStatus.mastered.length}</span>
-                      <span className="text-amber-600 dark:text-amber-400">⚠{understandingStatus.pendingClarification.length}</span>
-                      {isUpdatingStatus && (
-                        <svg className="w-3 h-3 animate-spin text-notion-accent" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                      )}
-                      <svg className={`w-3 h-3 ml-auto transition-transform ${showStatusDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </button>
-                  <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-                    <div className="overflow-hidden">
-                      <div className="pt-2 pb-1 space-y-1.5">
-                        {understandingStatus.mastered.length > 0 && (
-                          <div>
-                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">已掌握</span>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {understandingStatus.mastered.map((item, idx) => (
-                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {understandingStatus.pendingClarification.length > 0 && (
-                          <div>
-                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">待澄清</span>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {understandingStatus.pendingClarification.map((item, idx) => (
-                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="text-[11px] text-notion-text-secondary">
-                          理解信心: {understandingStatus.evidenceStatus}
-                        </div>
-                        {understandingStatus.nextThinkingDirection && (
-                          <div className="text-[11px] text-notion-text-secondary">
-                            💡 {understandingStatus.nextThinkingDirection}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <UnderstandingStatusBar
+                  understandingStatus={understandingStatus}
+                  showStatusDetail={showStatusDetail}
+                  onToggleDetail={() => setShowStatusDetail(!showStatusDetail)}
+                  isUpdatingStatus={isUpdatingStatus}
+                />
               )}
               <div className="p-4 pt-2">
               {streamState.isStreaming ? (
@@ -2787,55 +2466,12 @@ suggestedPath 使用文档标题。`
           {conversationStarted && isRoundCompleted && !isViewingHistory && (
             <div className="border-t border-notion-border bg-notion-bg">
               {understandingStatus && !showKnowledgePanel && (
-                <div className="px-4 pt-3">
-                  <button
-                    onClick={() => setShowStatusDetail(!showStatusDetail)}
-                    className="w-full text-left"
-                  >
-                    <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
-                      <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
-                      <span className="text-green-600 dark:text-green-400">✓{understandingStatus.mastered.length}</span>
-                      <span className="text-amber-600 dark:text-amber-400">⚠{understandingStatus.pendingClarification.length}</span>
-                      <svg className={`w-3 h-3 ml-auto transition-transform ${showStatusDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </button>
-                  <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-                    <div className="overflow-hidden">
-                      <div className="pt-2 pb-1 space-y-1.5">
-                        {understandingStatus.mastered.length > 0 && (
-                          <div>
-                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">已掌握</span>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {understandingStatus.mastered.map((item, idx) => (
-                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {understandingStatus.pendingClarification.length > 0 && (
-                          <div>
-                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">待澄清</span>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {understandingStatus.pendingClarification.map((item, idx) => (
-                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        <div className="text-[11px] text-notion-text-secondary">
-                          理解信心: {understandingStatus.evidenceStatus}
-                        </div>
-                        {understandingStatus.nextThinkingDirection && (
-                          <div className="text-[11px] text-notion-text-secondary">
-                            💡 {understandingStatus.nextThinkingDirection}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <UnderstandingStatusBar
+                  understandingStatus={understandingStatus}
+                  showStatusDetail={showStatusDetail}
+                  onToggleDetail={() => setShowStatusDetail(!showStatusDetail)}
+                  isUpdatingStatus={false}
+                />
               )}
               <div className="p-4">
               <button

@@ -1,6 +1,9 @@
 import { Message, OpenAIConfig } from "./types"
 import { readStream } from "./stream"
 
+const NON_STREAM_TIMEOUT = 30000
+const STREAM_TIMEOUT = 120000
+
 function stripThinkTags(content: string): string {
   return content
     .replace(/<think[\s\S]*?<\/think>/g, "")
@@ -38,6 +41,15 @@ function buildHeaders(apiKey: string): Record<string, string> {
   }
 }
 
+function createTimeoutSignal(ms: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), ms)
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeoutId),
+  }
+}
+
 export class LLMError extends Error {
   constructor(
     message: string,
@@ -58,25 +70,37 @@ export async function callLLM(
   }
 
   const url = buildApiUrl(config.baseURL)
-  const response = await fetch(url, {
-    method: "POST",
-    headers: buildHeaders(config.apiKey),
-    body: buildRequestBody(config, messages, false, maxTokens),
-  })
+  const { signal: timeoutSignal, clear: clearTimeout } = createTimeoutSignal(NON_STREAM_TIMEOUT)
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new LLMError(
-      errorData.error?.message || `API 错误: ${response.status}`,
-      response.status
-    )
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: buildHeaders(config.apiKey),
+      body: buildRequestBody(config, messages, false, maxTokens),
+      signal: timeoutSignal,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new LLMError(
+        errorData.error?.message || `API 错误: ${response.status}`,
+        response.status
+      )
+    }
+
+    const data = await response.json()
+    let content = data.choices?.[0]?.message?.content || ""
+    content = stripThinkTags(content)
+
+    return content
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new LLMError("请求超时，请检查网络连接或稍后重试")
+    }
+    throw err
+  } finally {
+    clearTimeout()
   }
-
-  const data = await response.json()
-  let content = data.choices?.[0]?.message?.content || ""
-  content = stripThinkTags(content)
-
-  return content
 }
 
 export async function callLLMStream(
@@ -90,23 +114,48 @@ export async function callLLMStream(
   }
 
   const url = buildApiUrl(config.baseURL)
-  const response = await fetch(url, {
-    method: "POST",
-    headers: buildHeaders(config.apiKey),
-    body: buildRequestBody(config, messages, true),
-    signal,
-  })
+  const { signal: timeoutSignal, clear: clearTimeout } = createTimeoutSignal(STREAM_TIMEOUT)
 
-  if (!response.ok) {
-    let errorMessage = `API 错误: ${response.status}`
-    try {
-      const errorData = await response.json()
-      errorMessage = errorData.error?.message || errorMessage
-    } catch {}
-    throw new LLMError(errorMessage, response.status)
+  const combinedController = new AbortController()
+
+  const onAbort = () => combinedController.abort()
+  timeoutSignal.addEventListener("abort", onAbort)
+  if (signal) {
+    signal.addEventListener("abort", onAbort)
+    if (signal.aborted) combinedController.abort()
   }
 
-  const rawText = await readStream(response, onChunk, signal)
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: buildHeaders(config.apiKey),
+      body: buildRequestBody(config, messages, true),
+      signal: combinedController.signal,
+    })
 
-  return stripThinkTags(rawText)
+    if (!response.ok) {
+      let errorMessage = `API 错误: ${response.status}`
+      try {
+        const errorData = await response.json()
+        errorMessage = errorData.error?.message || errorMessage
+      } catch {}
+      throw new LLMError(errorMessage, response.status)
+    }
+
+    const rawText = await readStream(response, onChunk, combinedController.signal)
+
+    return stripThinkTags(rawText)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      if (timeoutSignal.aborted && !signal?.aborted) {
+        throw new LLMError("请求超时，请检查网络连接或稍后重试")
+      }
+      throw new LLMError("请求已取消")
+    }
+    throw err
+  } finally {
+    clearTimeout()
+    timeoutSignal.removeEventListener("abort", onAbort)
+    if (signal) signal.removeEventListener("abort", onAbort)
+  }
 }

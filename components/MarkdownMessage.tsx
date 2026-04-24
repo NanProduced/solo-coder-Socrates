@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 
-const escapeHtml = (text: string): string => {
+function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -9,7 +9,12 @@ const escapeHtml = (text: string): string => {
     .replace(/'/g, '&#039;')
 }
 
-export const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean }) => {
+interface MarkdownMessageProps {
+  content: string
+  isUser: boolean
+}
+
+export const MarkdownMessage = ({ content, isUser }: MarkdownMessageProps) => {
   const renderedHTML = useMemo(() => {
     let html = content
 
@@ -44,7 +49,7 @@ export const MarkdownMessage = ({ content, isUser }: { content: string; isUser: 
     html = html.replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
 
     html = html.replace(/^&gt;\s+(.+)$/gm, (match, text) => {
-      return `<blockquote class="border-l-4 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
+      return `<blockquote class="border-l-2 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
     })
 
     html = html.replace(/\n\n/g, '</p><p class="mb-2 last:mb-0">')
@@ -56,13 +61,13 @@ export const MarkdownMessage = ({ content, isUser }: { content: string; isUser: 
 
     html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
       const code = inlineCodes[parseInt(index)]
-      const bgClass = isUser ? 'bg-white/20' : 'bg-gray-100 text-gray-800'
+      const bgClass = isUser ? 'bg-white/20' : 'bg-notion-bg-secondary text-notion-text'
       return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
     })
 
     html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
       const code = codeBlocks[parseInt(index)]
-      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-gray-50 text-gray-800 text-xs font-mono overflow-x-auto">${code}</code></pre>`
+      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-notion-bg-secondary text-notion-text text-xs font-mono overflow-x-auto">${code}</code></pre>`
     })
 
     return html
@@ -70,7 +75,7 @@ export const MarkdownMessage = ({ content, isUser }: { content: string; isUser: 
 
   return (
     <div
-      className={`text-sm leading-relaxed break-words ${isUser ? 'text-white' : 'text-notion-text'}`}
+      className="text-sm leading-relaxed"
       dangerouslySetInnerHTML={{ __html: renderedHTML }}
     />
   )
