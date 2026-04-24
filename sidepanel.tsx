@@ -1038,6 +1038,8 @@ function SidePanel() {
       setShowKnowledgePanel(false)
       return
     }
+    setShowHistoryPanel(false)
+    setShowKnowledgeLibrary(false)
     const currentKey = pageKeyRef.current
     if (!currentKey) return
     const existingDoc = await loadKnowledgeDocument(currentKey)
@@ -1104,6 +1106,7 @@ function SidePanel() {
         setNeedsFileAccess(false)
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
+        setShowKnowledgeLibrary(false)
         setKnowledgeDoc(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
@@ -1129,6 +1132,7 @@ function SidePanel() {
         setViewingRoundId(null)
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
+        setShowKnowledgeLibrary(false)
         setKnowledgeDoc(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
@@ -1148,6 +1152,7 @@ function SidePanel() {
 
       if (key === pageKeyRef.current) {
         setShowHistoryPanel(false)
+        setShowKnowledgeLibrary(false)
         setViewingRoundId(null)
         return
       }
@@ -1175,6 +1180,7 @@ function SidePanel() {
       setViewingRoundId(null)
       setShowHistoryPanel(false)
       setShowKnowledgePanel(false)
+      setShowKnowledgeLibrary(false)
       setKnowledgeDoc(null)
       setShowStatusDetail(false)
       setShowCompressedDetail(false)
@@ -1227,6 +1233,7 @@ function SidePanel() {
     setDeletingId(null)
     setShowHistoryPanel(true)
     setShowKnowledgePanel(false)
+    setShowKnowledgeLibrary(false)
   }
 
   const refreshHistoryPanel = async () => {

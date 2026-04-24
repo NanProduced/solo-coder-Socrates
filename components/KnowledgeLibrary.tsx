@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { KnowledgeDocument, KeyConcept } from "../lib/types"
 import { loadAllKnowledgeDocuments, loadKnowledgeDocument, loadPageConversations } from "../lib/storage"
 
@@ -105,16 +105,24 @@ export const KnowledgeLibrary = ({
     }
   }, [])
 
-  useState(() => {
+  useEffect(() => {
     loadDocuments()
-  })
+  }, [loadDocuments])
+
+  const normalizeConcept = (name: string): string => {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+  }
 
   const commonConcepts = useMemo<ConceptAssociation[]>(() => {
     const conceptMap = new Map<string, ConceptAssociation>()
 
     documents.forEach((doc) => {
       doc.keyConcepts.forEach((concept) => {
-        const existing = conceptMap.get(concept.name)
+        const normalizedKey = normalizeConcept(concept.name)
+        const existing = conceptMap.get(normalizedKey)
         if (existing) {
           const exists = existing.documents.some((d) => d.pageKey === doc.pageKey)
           if (!exists) {
@@ -127,10 +135,30 @@ export const KnowledgeLibrary = ({
             existing.description = concept.description
           }
         } else {
-          conceptMap.set(concept.name, {
+          conceptMap.set(normalizedKey, {
             concept: concept.name,
             documents: [{ pageKey: doc.pageKey, pageTitle: doc.pageTitle }],
             description: concept.description,
+          })
+        }
+      })
+
+      doc.knowledgeCards.forEach((card) => {
+        const normalizedKey = normalizeConcept(card.concept)
+        const existing = conceptMap.get(normalizedKey)
+        if (existing) {
+          const exists = existing.documents.some((d) => d.pageKey === doc.pageKey)
+          if (!exists) {
+            existing.documents.push({
+              pageKey: doc.pageKey,
+              pageTitle: doc.pageTitle,
+            })
+          }
+        } else {
+          conceptMap.set(normalizedKey, {
+            concept: card.concept,
+            documents: [{ pageKey: doc.pageKey, pageTitle: doc.pageTitle }],
+            description: card.explanation,
           })
         }
       })
