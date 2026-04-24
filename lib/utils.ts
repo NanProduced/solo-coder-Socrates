@@ -93,10 +93,32 @@ export function mergeKnowledgeDoc(
     keyConcepts?: KeyConcept[]
     knowledgeCards?: KnowledgeCard[]
     understandingStatus?: UnderstandingStatus
+    pageKey?: string
+    pageTitle?: string
+    pageUrl?: string
   }
 ): KnowledgeDocument {
+  const now = Date.now()
   if (!oldDoc) {
-    return updates as KnowledgeDocument
+    return {
+      pageKey: updates.pageKey ?? "",
+      summary: updates.summary ?? "",
+      keyConcepts: updates.keyConcepts ?? [],
+      knowledgeCards: updates.knowledgeCards ?? [],
+      understandingStatus: updates.understandingStatus ?? {
+        currentStage: "初步接触",
+        mastered: [],
+        pendingClarification: [],
+        evidenceStatus: "低",
+        nextThinkingDirection: "",
+        updatedAt: now,
+      },
+      exportedMarkdown: undefined,
+      createdAt: now,
+      updatedAt: now,
+      pageTitle: updates.pageTitle ?? "",
+      pageUrl: updates.pageUrl ?? "",
+    }
   }
   return {
     ...oldDoc,
@@ -106,7 +128,7 @@ export function mergeKnowledgeDoc(
       : oldDoc.keyConcepts,
     knowledgeCards: updates.knowledgeCards ?? oldDoc.knowledgeCards,
     understandingStatus: updates.understandingStatus ?? oldDoc.understandingStatus,
-    updatedAt: Date.now(),
+    updatedAt: now,
     createdAt: oldDoc.createdAt,
     pageTitle: oldDoc.pageTitle,
     pageUrl: oldDoc.pageUrl,
@@ -133,11 +155,7 @@ export function findRelatedConcepts(
   for (const doc of allDocs) {
     if (doc.pageKey === currentDocKey) continue
     for (const concept of doc.keyConcepts) {
-      const nameLower = concept.name.toLowerCase()
-      if (currentSet.has(nameLower) ||
-          currentConcepts.some(c =>
-            nameLower.includes(c.toLowerCase()) || c.toLowerCase().includes(nameLower)
-          )) {
+      if (currentSet.has(concept.name.toLowerCase())) {
         related.push({
           docTitle: doc.pageTitle,
           concept: concept.name,

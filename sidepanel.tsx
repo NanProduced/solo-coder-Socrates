@@ -228,7 +228,7 @@ function SidePanel() {
   }, [messages])
 
   const generateId = () =>
-    Date.now().toString() + Math.random().toString(36).slice(2, 11)
+    crypto.randomUUID()
 
   getPageContentRef.current = async (): Promise<string> => {
     const result = await getPageContent(() => setContextInvalidated(true))
@@ -252,8 +252,8 @@ function SidePanel() {
     }
   }
 
-  const buildConversationContext = useCallback((): string => {
-    const round = rounds.find((r) => r.id === activeRoundId)
+  const buildConversationContext = useCallback((targetRound?: ConversationRound): string => {
+    const round = targetRound ?? rounds.find((r) => r.id === activeRoundId)
     if (!round) return ""
     const visibleMessages = round.messages.filter((m) => m.visible)
     if (visibleMessages.length === 0) return ""
@@ -456,8 +456,10 @@ function SidePanel() {
       await saveUnderstandingStatus(currentKey, doc.understandingStatus)
       setUnderstandingStatus(doc.understandingStatus)
 
+      const existingSchedules = await loadReviewSchedules(currentKey)
+      const existingMap = new Map(existingSchedules.map(s => [s.conceptName, s]))
       const schedules = doc.keyConcepts.map((c) =>
-        createInitialSchedule(currentKey, c.name)
+        existingMap.get(c.name) ?? createInitialSchedule(currentKey, c.name)
       )
       await saveReviewSchedules(currentKey, schedules)
       const due = await loadDueReviews()
@@ -695,7 +697,8 @@ suggestedPath 使用文档标题。`
       schedules.push(updatedSchedule)
     }
     await saveReviewSchedules(pageKey, schedules)
-    setDueReviewCount((prev) => Math.max(0, prev - 1))
+    const due = await loadDueReviews()
+    setDueReviewCount(due.length)
   }, [])
 
   const reviewConceptMap = useMemo(() => {
@@ -982,7 +985,8 @@ suggestedPath 使用文档标题。`
     setConfirmClearAll(false)
   }
 
-  const startConversation = async (mode: ConversationMode = "free", section?: DocumentSection) => {
+  const startConversation = async (mode?: ConversationMode, section?: DocumentSection) => {
+    const effectiveMode = mode ?? config.defaultConversationMode ?? "free"
     if (!hasConfig) {
       chrome.runtime.openOptionsPage()
       return
@@ -1034,7 +1038,7 @@ suggestedPath 使用文档标题。`
         if (sections.length > 1) {
           setIsLoading(false)
           setPendingSections(sections)
-          setPendingMode(mode)
+          setPendingMode(effectiveMode)
           return
         }
       }
@@ -1045,13 +1049,20 @@ suggestedPath 使用文档标题。`
 
       const roundId = generateId()
 
-      const systemPrompt = mode === "guided" ? SOCRATES_GUIDED_PROMPT : SOCRATES_SYSTEM_PROMPT
+      const systemPrompt = effectiveMode === "guided" ? SOCRATES_GUIDED_PROMPT : SOCRATES_SYSTEM_PROMPT
       const statusCtx = buildStatusContext(understandingStatus)
+
+      let languageInstruction = ""
+      if (config.languagePreference === "zh") {
+        languageInstruction = "\n\n【语言要求】请始终使用中文进行提问和对话。"
+      } else if (config.languagePreference === "en") {
+        languageInstruction = "\n\n【Language Requirement】Please always use English for questions and conversation."
+      }
 
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
-        content: systemPrompt + "\n\n" + contextPrompt + (statusCtx ? "\n\n" + statusCtx : ""),
+        content: systemPrompt + languageInstruction + "\n\n" + contextPrompt + (statusCtx ? "\n\n" + statusCtx : ""),
         timestamp: Date.now(),
         visible: false
       }
@@ -1075,7 +1086,7 @@ suggestedPath 使用文档标题。`
         updatedAt: Date.now(),
         pageTitle: pageInfo.title || pageTitle,
         pageUrl: pageInfo.url || pageUrl,
-        conversationMode: mode,
+        conversationMode: effectiveMode,
       }
 
       const newRounds = [...rounds, newRound]
@@ -1137,7 +1148,7 @@ suggestedPath 使用文档标题。`
           abortController.signal
         )
 
-        const structured = validateOutput(rawText, "question", mode)
+        const structured = validateOutput(rawText, "question", effectiveMode)
         const finalContent = formatStructuredContent(structured)
 
         const finalMessage: Message = {
@@ -1264,7 +1275,7 @@ suggestedPath 使用文档标题。`
     streamAccumulatedRef.current = ""
     try {
       let roundForLLM = { ...roundAfterUser, messages: messagesAfterUser }
-      if (shouldCompress(roundForLLM)) {
+      if (shouldCompress(roundForLLM, config.compressThreshold)) {
         const compressed = await compressContext(roundForLLM)
         roundForLLM = compressed
       }
@@ -1427,8 +1438,12 @@ suggestedPath 使用文档标题。`
 
     streamAccumulatedRef.current = ""
     try {
-      const roundWithInstruction = { ...currentRound, messages: [...currentRound.messages, internalInstruction] }
-      const messagesForAI = buildCompressedMessages(roundWithInstruction)
+      let roundForLLM = { ...currentRound, messages: [...currentRound.messages, internalInstruction] }
+      if (shouldCompress(roundForLLM, config.compressThreshold)) {
+        const compressed = await compressContext(roundForLLM)
+        roundForLLM = compressed
+      }
+      const messagesForAI = buildCompressedMessages(roundForLLM)
       const rawText = await callLLMStream(
         config,
         messagesForAI,
@@ -1543,6 +1558,8 @@ suggestedPath 使用文档标题。`
       const loadedRounds = await loadPageConversations(round.pageKey)
       setRounds(loadedRounds)
       setPageKey(round.pageKey)
+      setPageTitle(round.pageTitle)
+      setPageUrl(round.pageUrl)
       setViewingRoundId(round.id)
       if (!round.completed) {
         setActiveRoundId(round.id)
@@ -1967,7 +1984,7 @@ suggestedPath 使用文档标题。`
                         {message.isStreaming && (
                           <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-[blink_1s_ease-in-out_infinite] align-text-bottom" />
                         )}
-                        {!message.isStreaming && message.structuredOutput?.options && message.structuredOutput.options.length >= 2 && !isRoundCompleted && (
+                        {!message.isStreaming && message.structuredOutput?.options && message.structuredOutput.options.length >= 2 && !isRoundCompleted && !isViewingHistory && (
                           <div className="mt-3 flex flex-col gap-1.5">
                             {message.structuredOutput.options.map((option, idx) => {
                               const labels = ["A", "B", "C", "D", "E"]

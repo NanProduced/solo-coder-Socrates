@@ -7,6 +7,7 @@ export function parseSSEChunk(chunk: string): SSEEvent[] {
   const lines = chunk.split("\n")
 
   let currentData = ""
+  let hasData = false
 
   for (const line of lines) {
     if (line.startsWith(":")) {
@@ -18,24 +19,37 @@ export function parseSSEChunk(chunk: string): SSEEvent[] {
       if (data === "[DONE]") {
         continue
       }
+      if (hasData) {
+        currentData += "\n"
+      }
       currentData += data
+      hasData = true
     } else if (line.startsWith("data:")) {
       const data = line.slice(5)
       if (data === "[DONE]") {
         continue
       }
+      if (hasData) {
+        currentData += "\n"
+      }
       currentData += data
+      hasData = true
     } else if (line === "") {
-      if (currentData) {
+      if (hasData) {
         events.push({ data: currentData })
         currentData = ""
+        hasData = false
       }
     } else {
+      if (hasData) {
+        currentData += "\n"
+      }
       currentData += line
+      hasData = true
     }
   }
 
-  if (currentData) {
+  if (hasData) {
     events.push({ data: currentData })
   }
 
