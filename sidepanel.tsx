@@ -65,6 +65,7 @@ import {
   CONCEPTS_CARDS_PROMPT,
   DOC_STATUS_PROMPT,
   EXPORT_PROMPT,
+  buildLearningStatusContext,
 } from "./lib/prompts"
 import {
   parseLLMJson,
@@ -1302,10 +1303,24 @@ suggestedPath 使用文档标题。`
       setIsLoading(true)
 
       streamAccumulatedRef.current = ""
+
+      let messagesForLLM: Message[] = [initialMessage, firstUserMessage]
+      const learningStatusContext = buildLearningStatusContext(understandingStatus)
+      if (learningStatusContext) {
+        const statusMessage: Message = {
+          id: generateId(),
+          role: "system",
+          content: learningStatusContext,
+          timestamp: Date.now(),
+          visible: false,
+        }
+        messagesForLLM = [initialMessage, statusMessage, firstUserMessage]
+      }
+
       try {
         const rawText = await callLLMStream(
           config,
-          [initialMessage, firstUserMessage],
+          messagesForLLM,
           (chunk) => {
             streamAccumulatedRef.current += chunk
             const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
@@ -1460,7 +1475,29 @@ suggestedPath 使用文档标题。`
         const compressed = await compressContext(roundForLLM)
         roundForLLM = compressed
       }
-      const messagesForLLM = buildCompressedMessages(roundForLLM)
+      let messagesForLLM = buildCompressedMessages(roundForLLM)
+
+      const learningStatusContext = buildLearningStatusContext(understandingStatus)
+      if (learningStatusContext) {
+        const statusMessage: Message = {
+          id: generateId(),
+          role: "system",
+          content: learningStatusContext,
+          timestamp: Date.now(),
+          visible: false,
+        }
+        const firstVisibleIndex = messagesForLLM.findIndex((m) => m.visible)
+        if (firstVisibleIndex === -1) {
+          messagesForLLM = [...messagesForLLM, statusMessage]
+        } else {
+          messagesForLLM = [
+            ...messagesForLLM.slice(0, firstVisibleIndex),
+            statusMessage,
+            ...messagesForLLM.slice(firstVisibleIndex),
+          ]
+        }
+      }
+
       const rawText = await callLLMStream(
         config,
         messagesForLLM,
@@ -1616,7 +1653,29 @@ suggestedPath 使用文档标题。`
     streamAccumulatedRef.current = ""
     try {
       const roundWithInstruction = { ...currentRound, messages: [...currentRound.messages, internalInstruction] }
-      const messagesForAI = buildCompressedMessages(roundWithInstruction)
+      let messagesForAI = buildCompressedMessages(roundWithInstruction)
+
+      const learningStatusContext = buildLearningStatusContext(understandingStatus)
+      if (learningStatusContext) {
+        const statusMessage: Message = {
+          id: generateId(),
+          role: "system",
+          content: learningStatusContext,
+          timestamp: Date.now(),
+          visible: false,
+        }
+        const firstVisibleIndex = messagesForAI.findIndex((m) => m.visible)
+        if (firstVisibleIndex === -1) {
+          messagesForAI = [...messagesForAI, statusMessage]
+        } else {
+          messagesForAI = [
+            ...messagesForAI.slice(0, firstVisibleIndex),
+            statusMessage,
+            ...messagesForAI.slice(firstVisibleIndex),
+          ]
+        }
+      }
+
       const rawText = await callLLMStream(
         config,
         messagesForAI,
