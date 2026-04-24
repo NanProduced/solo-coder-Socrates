@@ -1371,9 +1371,7 @@ function SidePanel() {
         )
 
         const structured = validateOutput(rawText, "question", mode)
-        const finalContent = structured.options?.length
-          ? formatDisplayContent(structured)
-          : formatStructuredContent(structured)
+        const finalContent = formatStructuredContent(structured)
 
         const finalMessage: Message = {
           id: assistantId,
@@ -1526,9 +1524,7 @@ function SidePanel() {
 
       const mode = shouldComplete ? "summary" : "question"
       const structured = validateOutput(rawText, mode, currentRound.conversationMode)
-      const finalContent = structured.options?.length
-        ? formatDisplayContent(structured)
-        : formatStructuredContent(structured)
+      const finalContent = formatStructuredContent(structured)
 
       const finalMessage: Message = {
         id: assistantId,
@@ -1682,9 +1678,7 @@ function SidePanel() {
       )
 
       const structured = validateOutput(rawText, "summary", currentRound.conversationMode)
-      const finalContent = structured.options?.length
-        ? formatDisplayContent(structured)
-        : formatStructuredContent(structured)
+      const finalContent = formatStructuredContent(structured)
 
       const finalMessage: Message = {
         id: assistantId,
@@ -2446,7 +2440,14 @@ function SidePanel() {
                           ? "bg-notion-accent text-white shadow-md shadow-notion-accent/10"
                           : "bg-notion-bg-secondary text-notion-text border border-notion-border/30 shadow-sm"
                       }`}>
-                        <MarkdownMessage content={message.content} isUser={message.role === "user"} />
+                        <MarkdownMessage
+                          content={
+                            message.structuredOutput?.options && message.structuredOutput.options.length >= 2
+                              ? formatDisplayContent(message.structuredOutput)
+                              : message.content
+                          }
+                          isUser={message.role === "user"}
+                        />
                         {message.isStreaming && (
                           <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
                         )}
