@@ -1,9 +1,11 @@
 import { Storage } from "@plasmohq/storage"
-import { ConversationRound } from "./types"
+import { ConversationRound, UnderstandingStatus, KnowledgeDocument } from "./types"
 
 const storage = new Storage({ area: "local" })
 
 const CONVERSATION_KEY_PREFIX = "page-conversations:"
+const UNDERSTANDING_STATUS_KEY_PREFIX = "understanding-status:"
+const KNOWLEDGE_DOC_KEY_PREFIX = "knowledge-doc:"
 
 export function getPageConversationsKey(pageKey: string): string {
   return CONVERSATION_KEY_PREFIX + pageKey
@@ -113,4 +115,57 @@ export async function deleteAllConversations(): Promise<void> {
   if (keysToRemove.length > 0) {
     await chrome.storage.local.remove(keysToRemove)
   }
+}
+
+export async function loadUnderstandingStatus(
+  pageKey: string
+): Promise<UnderstandingStatus | null> {
+  const key = UNDERSTANDING_STATUS_KEY_PREFIX + pageKey
+  const data = await storage.get<UnderstandingStatus>(key)
+  return data ?? null
+}
+
+export async function saveUnderstandingStatus(
+  pageKey: string,
+  status: UnderstandingStatus
+): Promise<void> {
+  const key = UNDERSTANDING_STATUS_KEY_PREFIX + pageKey
+  await storage.set(key, status)
+}
+
+export async function loadKnowledgeDocument(
+  pageKey: string
+): Promise<KnowledgeDocument | null> {
+  const key = KNOWLEDGE_DOC_KEY_PREFIX + pageKey
+  const data = await storage.get<KnowledgeDocument>(key)
+  return data ?? null
+}
+
+export async function saveKnowledgeDocument(
+  pageKey: string,
+  doc: KnowledgeDocument
+): Promise<void> {
+  const key = KNOWLEDGE_DOC_KEY_PREFIX + pageKey
+  await storage.set(key, doc)
+}
+
+export async function deleteKnowledgeDocument(
+  pageKey: string
+): Promise<void> {
+  const key = KNOWLEDGE_DOC_KEY_PREFIX + pageKey
+  await chrome.storage.local.remove(key)
+}
+
+export async function loadAllKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  const allData = await chrome.storage.local.get(null)
+  const docs: KnowledgeDocument[] = []
+
+  for (const [key, value] of Object.entries(allData)) {
+    if (key.startsWith(KNOWLEDGE_DOC_KEY_PREFIX) && value) {
+      docs.push(value as KnowledgeDocument)
+    }
+  }
+
+  docs.sort((a, b) => b.updatedAt - a.updatedAt)
+  return docs
 }

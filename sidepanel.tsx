@@ -9,6 +9,8 @@ import {
   StreamState,
   generatePageKey,
   isSummaryRequest,
+  UnderstandingStatus,
+  KnowledgeDocument,
 } from "./lib/types"
 import {
   loadPageConversations,
@@ -16,6 +18,10 @@ import {
   loadAllConversations,
   deleteConversationRounds,
   deleteAllConversations,
+  loadUnderstandingStatus,
+  saveUnderstandingStatus,
+  loadKnowledgeDocument,
+  saveKnowledgeDocument,
 } from "./lib/storage"
 import {
   extractPdfFromUrl,
@@ -30,7 +36,7 @@ import {
   buildContextPrompt,
   type ContentMeta,
 } from "./lib/content-utils"
-import { callLLMStream, LLMError } from "./lib/llm"
+import { callLLMStream, callLLM, LLMError } from "./lib/llm"
 import {
   validateOutput,
   extractStreamingDisplay,
@@ -118,6 +124,106 @@ A) 函数调用自身
 B) 循环的语法糖
 C) 分而治之的策略
 D) 栈的操作`
+
+const STATUS_UPDATE_PROMPT = `你是一个学习状态分析器。根据以下对话历史，评估用户对文档的理解状态。
+
+请以 JSON 格式输出（不要包含 markdown 代码块标记）：
+{
+  "currentStage": "当前学习阶段，使用以下之一：初步接触 | 建立框架 | 深入理解 | 融会贯通",
+  "mastered": ["已掌握的知识点1", "已掌握的知识点2"],
+  "pendingClarification": ["待澄清的问题1", "待澄清的问题2"],
+  "evidenceStatus": "对已掌握内容的信心程度：薄弱推断 | 部分验证 | 充分支持",
+  "nextThinkingDirection": "建议用户下一步思考的方向"
+}
+
+要求：
+- currentStage 必须从四个阶段中选择最匹配的
+- mastered 列出用户已展现出理解的知识点
+- pendingClarification 列出对话中暴露出的理解盲区
+- evidenceStatus 基于用户回答的深度和准确性判断
+- nextThinkingDirection 给出具体的、可操作的思考方向`
+
+const SUMMARY_PROMPT = `你是一个知识文档生成器。请为以下文档内容生成一份精炼的摘要。
+
+要求：
+- 摘要应涵盖文档的核心主题、主要论点和关键结论
+- 长度控制在 150-300 字
+- 语言精炼，避免冗余
+- 直接输出摘要文本，不要添加标题或前缀`
+
+const CONCEPTS_CARDS_PROMPT = `你是一个知识文档生成器。请根据以下文档内容和对话历史，提取关键概念并生成知识卡片。
+
+请以 JSON 格式输出（不要包含 markdown 代码块标记）：
+{
+  "keyConcepts": [
+    { "name": "概念名称", "description": "概念简述（1-2句话）" }
+  ],
+  "knowledgeCards": [
+    {
+      "concept": "概念名称",
+      "explanation": "一句话解释",
+      "keyPoints": ["要点1", "要点2", "要点3"]
+    }
+  ]
+}
+
+要求：
+- 提取 3-8 个关键概念
+- 每个概念都需要对应一张知识卡片
+- keyPoints 每张卡片 2-4 条
+- 要点应包含：定义、核心特征、典型应用或常见误区
+- 结合对话历史中用户已讨论过的内容，优先处理用户关注的概念`
+
+const DOC_STATUS_PROMPT = `你是一个学习状态分析器。根据以下完整的对话历史，生成一份全面的理解状态评估。
+
+请以 JSON 格式输出（不要包含 markdown 代码块标记）：
+{
+  "currentStage": "当前学习阶段：初步接触 | 建立框架 | 深入理解 | 融会贯通",
+  "mastered": ["已掌握的知识点"],
+  "pendingClarification": ["待澄清的问题"],
+  "evidenceStatus": "证据状态描述（需比自动更新更详细，50-100字）",
+  "nextThinkingDirection": "下一步思考方向（需比自动更新更具体，50-100字）"
+}
+
+要求：
+- 这是知识文档的正式评估，需要比实时跟踪更全面深入
+- mastered 应包含所有对话中展现出的理解
+- pendingClarification 应包含所有未解决的疑问
+- evidenceStatus 需要详细描述对用户理解的信心及依据
+- nextThinkingDirection 需要给出具体的、可操作的学习建议`
+
+const EXPORT_PROMPT = `你是一个知识文档编辑器。请将以下知识文档内容润色为一份结构清晰、语言流畅的 Markdown 文档。
+
+要求：
+- 使用恰当的 Markdown 格式（标题、列表、引用、粗体等）
+- 语言流畅自然，像一篇精心编写的读书笔记
+- 保持信息完整性的同时提升可读性
+- 在文档末尾添加"学习状态"章节
+- 不要添加原文中没有的信息，但可以优化表达方式
+- 直接输出 Markdown 文本，不要包含代码块标记`
+
+const parseLLMJson = (text: string): any => {
+  let cleaned = text.trim()
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim()
+  }
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    cleaned = jsonMatch[0]
+  }
+  return JSON.parse(cleaned)
+}
+
+const downloadMarkdown = (content: string, filename?: string) => {
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = `${filename || "知识文档"}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 const escapeHtml = (text: string): string => {
   return text
@@ -265,12 +371,22 @@ function SidePanel() {
   const [isLocalFile, setIsLocalFile] = useState(false)
   const [needsFileAccess, setNeedsFileAccess] = useState(false)
 
+  const [showKnowledgePanel, setShowKnowledgePanel] = useState(false)
+  const [knowledgeDoc, setKnowledgeDoc] = useState<KnowledgeDocument | null>(null)
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+  const [understandingStatus, setUnderstandingStatus] = useState<UnderstandingStatus | null>(null)
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
+  const [showStatusDetail, setShowStatusDetail] = useState(false)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const activeAbortRef = useRef<AbortController | null>(null)
   const streamAccumulatedRef = useRef("")
   const pageKeyRef = useRef("")
+  const statusUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const getPageContentRef = useRef<() => Promise<string>>(null as any)
 
   useEffect(() => {
     pageKeyRef.current = pageKey
@@ -689,6 +805,11 @@ function SidePanel() {
     return { title: "", content: "", url: "", contextPrompt: "", error: "无法提取页面内容，可能是浏览器限制页面" }
   }
 
+  getPageContentRef.current = async (): Promise<string> => {
+    const result = await getPageContent()
+    return result.contextPrompt || result.content
+  }
+
   const abortCurrentStream = useCallback(() => {
     if (streamState.abortController) {
       streamState.abortController.abort()
@@ -706,6 +827,204 @@ function SidePanel() {
     }
   }
 
+  const buildConversationContext = useCallback((): string => {
+    const round = rounds.find((r) => r.id === activeRoundId)
+    if (!round) return ""
+    const visibleMessages = round.messages.filter((m) => m.visible)
+    if (visibleMessages.length === 0) return ""
+    const contextLines = visibleMessages.map(
+      (m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`
+    )
+    return "\n\n--- 对话历史 ---\n" + contextLines.join("\n")
+  }, [rounds, activeRoundId])
+
+  const updateUnderstandingStatus = useCallback(async () => {
+    const currentKey = pageKeyRef.current
+    if (!currentKey || !config.apiKey || !config.baseURL) return
+    const round = rounds.find((r) => r.id === activeRoundId)
+    if (!round || round.messages.filter((m) => m.visible && m.role === "user").length === 0) return
+
+    setIsUpdatingStatus(true)
+    try {
+      const conversationContext = buildConversationContext()
+      const pageContext = pageTitle ? `\n\n--- 文档信息 ---\n标题: ${pageTitle}\nURL: ${pageUrl}` : ""
+      const result = await callLLM(config, [
+        { id: "", role: "system", content: STATUS_UPDATE_PROMPT, timestamp: Date.now(), visible: true },
+        { id: "", role: "user", content: pageContext + conversationContext, timestamp: Date.now(), visible: true },
+      ])
+      const parsed = parseLLMJson(result)
+      const status: UnderstandingStatus = {
+        currentStage: parsed.currentStage || "初步接触",
+        mastered: Array.isArray(parsed.mastered) ? parsed.mastered : [],
+        pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : [],
+        evidenceStatus: parsed.evidenceStatus || "薄弱推断",
+        nextThinkingDirection: parsed.nextThinkingDirection || "",
+        updatedAt: Date.now(),
+      }
+      await saveUnderstandingStatus(currentKey, status)
+      setUnderstandingStatus(status)
+    } catch {
+    } finally {
+      setIsUpdatingStatus(false)
+    }
+  }, [config, rounds, activeRoundId, buildConversationContext, pageTitle, pageUrl])
+
+  const scheduleStatusUpdate = useCallback(() => {
+    if (statusUpdateTimerRef.current) {
+      clearTimeout(statusUpdateTimerRef.current)
+    }
+    statusUpdateTimerRef.current = setTimeout(() => {
+      updateUnderstandingStatus()
+    }, 3000)
+  }, [updateUnderstandingStatus])
+
+  const generateKnowledgeDocument = useCallback(async () => {
+    const currentKey = pageKeyRef.current
+    if (!currentKey || !config.apiKey || !config.baseURL) return
+
+    setIsGeneratingDoc(true)
+    setShowKnowledgePanel(true)
+    try {
+      const content = await getPageContentRef.current()
+      const conversationContext = buildConversationContext()
+      const userContent = content + conversationContext
+
+      const systemMessages = [
+        { id: "", role: "system" as const, content: SUMMARY_PROMPT, timestamp: Date.now(), visible: true },
+        { id: "", role: "user" as const, content: userContent, timestamp: Date.now(), visible: true },
+      ]
+      const conceptsMessages = [
+        { id: "", role: "system" as const, content: CONCEPTS_CARDS_PROMPT, timestamp: Date.now(), visible: true },
+        { id: "", role: "user" as const, content: userContent, timestamp: Date.now(), visible: true },
+      ]
+      const statusMessages = [
+        { id: "", role: "system" as const, content: DOC_STATUS_PROMPT, timestamp: Date.now(), visible: true },
+        { id: "", role: "user" as const, content: userContent, timestamp: Date.now(), visible: true },
+      ]
+
+      const [summaryResult, conceptsResult, statusResult] = await Promise.allSettled([
+        callLLM(config, systemMessages, 2000),
+        callLLM(config, conceptsMessages, 4000),
+        callLLM(config, statusMessages, 2000),
+      ])
+
+      const summary = summaryResult.status === "fulfilled" ? summaryResult.value : "摘要生成失败，请尝试更新"
+
+      let keyConcepts: { name: string; description: string }[] = []
+      let knowledgeCards: { concept: string; explanation: string; keyPoints: string[] }[] = []
+      if (conceptsResult.status === "fulfilled") {
+        try {
+          const parsed = parseLLMJson(conceptsResult.value)
+          keyConcepts = Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts : []
+          knowledgeCards = Array.isArray(parsed.knowledgeCards) ? parsed.knowledgeCards : []
+        } catch {}
+      }
+
+      let docStatus: UnderstandingStatus = {
+        currentStage: "初步接触",
+        mastered: [],
+        pendingClarification: [],
+        evidenceStatus: "薄弱推断",
+        nextThinkingDirection: "",
+        updatedAt: Date.now(),
+      }
+      if (statusResult.status === "fulfilled") {
+        try {
+          const parsed = parseLLMJson(statusResult.value)
+          docStatus = {
+            currentStage: parsed.currentStage || "初步接触",
+            mastered: Array.isArray(parsed.mastered) ? parsed.mastered : [],
+            pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : [],
+            evidenceStatus: parsed.evidenceStatus || "薄弱推断",
+            nextThinkingDirection: parsed.nextThinkingDirection || "",
+            updatedAt: Date.now(),
+          }
+        } catch {}
+      }
+
+      const existingDoc = await loadKnowledgeDocument(currentKey)
+      const doc: KnowledgeDocument = {
+        pageKey: currentKey,
+        summary,
+        keyConcepts,
+        knowledgeCards,
+        understandingStatus: docStatus,
+        createdAt: existingDoc?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        pageTitle,
+        pageUrl,
+      }
+
+      await saveKnowledgeDocument(currentKey, doc)
+      setKnowledgeDoc(doc)
+      await saveUnderstandingStatus(currentKey, docStatus)
+      setUnderstandingStatus(docStatus)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "知识文档生成失败")
+    } finally {
+      setIsGeneratingDoc(false)
+    }
+  }, [config, pageTitle, pageUrl, buildConversationContext])
+
+  const handleKnowledgeButtonClick = useCallback(async () => {
+    if (showKnowledgePanel) {
+      setShowKnowledgePanel(false)
+      return
+    }
+    const currentKey = pageKeyRef.current
+    if (!currentKey) return
+    const existingDoc = await loadKnowledgeDocument(currentKey)
+    if (existingDoc) {
+      setKnowledgeDoc(existingDoc)
+      setShowKnowledgePanel(true)
+    } else {
+      generateKnowledgeDocument()
+    }
+  }, [showKnowledgePanel, generateKnowledgeDocument])
+
+  const handleExportMarkdown = useCallback(async () => {
+    if (!knowledgeDoc) return
+    setIsExporting(true)
+    try {
+      const rawParts: string[] = []
+      rawParts.push(`# ${knowledgeDoc.pageTitle || "知识文档"}\n`)
+      rawParts.push(`## 摘要\n${knowledgeDoc.summary}\n`)
+      rawParts.push(`## 关键概念\n`)
+      for (const c of knowledgeDoc.keyConcepts) {
+        rawParts.push(`- **${c.name}**: ${c.description}`)
+      }
+      rawParts.push(`\n## 知识卡片\n`)
+      for (const card of knowledgeDoc.knowledgeCards) {
+        rawParts.push(`### ${card.concept}\n${card.explanation}\n`)
+        for (const p of card.keyPoints) {
+          rawParts.push(`- ${p}`)
+        }
+        rawParts.push("")
+      }
+      rawParts.push(`## 学习状态\n`)
+      rawParts.push(`- 当前阶段: ${knowledgeDoc.understandingStatus.currentStage}`)
+      rawParts.push(`- 已掌握: ${knowledgeDoc.understandingStatus.mastered.join("、")}`)
+      rawParts.push(`- 待澄清: ${knowledgeDoc.understandingStatus.pendingClarification.join("、")}`)
+      rawParts.push(`- 证据状态: ${knowledgeDoc.understandingStatus.evidenceStatus}`)
+      rawParts.push(`- 下一步思考: ${knowledgeDoc.understandingStatus.nextThinkingDirection}`)
+
+      const rawMarkdown = rawParts.join("\n")
+
+      try {
+        const polished = await callLLM(config, [
+          { id: "", role: "system", content: EXPORT_PROMPT, timestamp: Date.now(), visible: true },
+          { id: "", role: "user", content: rawMarkdown, timestamp: Date.now(), visible: true },
+        ], 4000)
+        downloadMarkdown(polished, knowledgeDoc.pageTitle)
+      } catch {
+        downloadMarkdown(rawMarkdown, knowledgeDoc.pageTitle)
+      }
+    } catch {
+    } finally {
+      setIsExporting(false)
+    }
+  }, [knowledgeDoc, config])
+
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -716,6 +1035,9 @@ function SidePanel() {
         setViewingRoundId(null)
         setIsLocalFile(false)
         setNeedsFileAccess(false)
+        setUnderstandingStatus(null)
+        setShowKnowledgePanel(false)
+        setKnowledgeDoc(null)
         return
       }
 
@@ -736,6 +1058,9 @@ function SidePanel() {
         setRounds([])
         setActiveRoundId(null)
         setViewingRoundId(null)
+        setUnderstandingStatus(null)
+        setShowKnowledgePanel(false)
+        setKnowledgeDoc(null)
         return
       }
 
@@ -778,7 +1103,13 @@ function SidePanel() {
 
       setViewingRoundId(null)
       setShowHistoryPanel(false)
+      setShowKnowledgePanel(false)
+      setKnowledgeDoc(null)
+      setShowStatusDetail(false)
       setErrorMessage(null)
+
+      const loadedStatus = await loadUnderstandingStatus(key)
+      setUnderstandingStatus(loadedStatus)
     } catch (error) {
       console.error("Failed to initialize page:", error)
     }
@@ -823,6 +1154,7 @@ function SidePanel() {
     setConfirmClearAll(false)
     setDeletingId(null)
     setShowHistoryPanel(true)
+    setShowKnowledgePanel(false)
   }
 
   const refreshHistoryPanel = async () => {
@@ -1253,6 +1585,7 @@ function SidePanel() {
         setStreamState({ isStreaming: false, abortController: null })
       }
       setIsLoading(false)
+      scheduleStatusUpdate()
     }
   }
 
@@ -1501,6 +1834,18 @@ function SidePanel() {
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
+          {conversationStarted && !isViewingHistory && (
+            <button
+              onClick={handleKnowledgeButtonClick}
+              disabled={isGeneratingDoc || streamState.isStreaming}
+              className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${showKnowledgePanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
+              title="知识文档"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </button>
+          )}
           {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
             <button
               onClick={handleSummarize}
@@ -1536,7 +1881,198 @@ function SidePanel() {
         </div>
       </header>
 
-      {showHistoryPanel ? (
+      {showKnowledgePanel ? (
+        <div className="flex flex-col h-full">
+          <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowKnowledgePanel(false)}
+                  className="text-notion-text-secondary hover:text-notion-text transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <h2 className="text-sm font-bold">知识文档</h2>
+              </div>
+              <div className="flex items-center gap-1">
+                {knowledgeDoc && !isGeneratingDoc && (
+                  <>
+                    <button
+                      onClick={generateKnowledgeDocument}
+                      disabled={isGeneratingDoc}
+                      className="text-[11px] text-notion-accent hover:text-notion-accent-hover font-medium transition-colors disabled:opacity-50"
+                    >
+                      更新
+                    </button>
+                    <span className="text-notion-border">|</span>
+                    <button
+                      onClick={handleExportMarkdown}
+                      disabled={isExporting}
+                      className="text-[11px] text-notion-accent hover:text-notion-accent-hover font-medium transition-colors disabled:opacity-50"
+                    >
+                      {isExporting ? "导出中..." : "导出"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {isGeneratingDoc ? (
+              <div className="p-5 space-y-6">
+                <div className="animate-pulse">
+                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
+                  <div className="h-20 bg-notion-bg-secondary rounded-xl" />
+                </div>
+                <div className="animate-pulse">
+                  <div className="h-3 bg-notion-bg-secondary rounded w-20 mb-3" />
+                  <div className="flex gap-2 flex-wrap">
+                    <div className="h-6 w-16 bg-notion-bg-secondary rounded-full" />
+                    <div className="h-6 w-20 bg-notion-bg-secondary rounded-full" />
+                    <div className="h-6 w-14 bg-notion-bg-secondary rounded-full" />
+                  </div>
+                </div>
+                <div className="animate-pulse">
+                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
+                  <div className="space-y-3">
+                    <div className="h-24 bg-notion-bg-secondary rounded-xl" />
+                    <div className="h-24 bg-notion-bg-secondary rounded-xl" />
+                  </div>
+                </div>
+                <div className="animate-pulse">
+                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
+                  <div className="h-32 bg-notion-bg-secondary rounded-xl" />
+                </div>
+              </div>
+            ) : knowledgeDoc ? (
+              <div className="p-5 space-y-6">
+                <div>
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">摘要</h3>
+                  <p className="text-sm text-notion-text leading-relaxed">{knowledgeDoc.summary}</p>
+                </div>
+
+                {knowledgeDoc.keyConcepts.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">关键概念</h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {knowledgeDoc.keyConcepts.map((concept, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center px-2.5 py-1 bg-notion-accent/10 text-notion-accent rounded-full text-xs font-medium"
+                        >
+                          {concept.name}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {knowledgeDoc.keyConcepts.map((concept, idx) => (
+                        <div key={idx} className="text-xs text-notion-text-secondary">
+                          <span className="font-medium text-notion-text">{concept.name}</span>: {concept.description}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {knowledgeDoc.knowledgeCards.length > 0 && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">知识卡片</h3>
+                    <div className="space-y-3">
+                      {knowledgeDoc.knowledgeCards.map((card, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30"
+                        >
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <div className="w-5 h-5 bg-notion-accent/10 rounded flex items-center justify-center flex-shrink-0">
+                              <span className="text-[10px] font-bold text-notion-accent">{idx + 1}</span>
+                            </div>
+                            <span className="text-sm font-semibold text-notion-text">{card.concept}</span>
+                          </div>
+                          <p className="text-xs text-notion-text-secondary mb-2 pl-7">{card.explanation}</p>
+                          {card.keyPoints.length > 0 && (
+                            <ul className="space-y-1 pl-7">
+                              {card.keyPoints.map((point, pIdx) => (
+                                <li key={pIdx} className="text-xs text-notion-text-secondary flex items-start gap-1.5">
+                                  <span className="text-notion-accent/60 mt-0.5 flex-shrink-0">·</span>
+                                  <span>{point}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">理解状态</h3>
+                  <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-notion-text-secondary">当前阶段</span>
+                      <span className="text-xs font-semibold text-notion-accent px-2 py-0.5 bg-notion-accent/10 rounded-full">
+                        {knowledgeDoc.understandingStatus.currentStage}
+                      </span>
+                    </div>
+                    {knowledgeDoc.understandingStatus.mastered.length > 0 && (
+                      <div>
+                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {knowledgeDoc.understandingStatus.mastered.map((item, idx) => (
+                            <span key={idx} className="text-[11px] px-2 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {knowledgeDoc.understandingStatus.pendingClarification.length > 0 && (
+                      <div>
+                        <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {knowledgeDoc.understandingStatus.pendingClarification.map((item, idx) => (
+                            <span key={idx} className="text-[11px] px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-xs text-notion-text-secondary font-medium">证据状态</span>
+                      <p className="text-xs text-notion-text mt-0.5">{knowledgeDoc.understandingStatus.evidenceStatus}</p>
+                    </div>
+                    {knowledgeDoc.understandingStatus.nextThinkingDirection && (
+                      <div>
+                        <span className="text-xs text-notion-text-secondary font-medium">💡 下一步思考</span>
+                        <p className="text-xs text-notion-text mt-0.5">{knowledgeDoc.understandingStatus.nextThinkingDirection}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-center pt-2 pb-4">
+                  <span className="text-[10px] text-notion-text-secondary opacity-60">
+                    更新于 {formatTime(knowledgeDoc.updatedAt)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
+                <svg className="w-12 h-12 text-notion-border mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                <p className="text-sm text-notion-text-secondary">暂无知识文档</p>
+                <p className="text-xs text-notion-text-secondary mt-1 opacity-60">开始对话后，点击生成知识文档</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : showHistoryPanel ? (
         <div className="flex flex-col h-full">
           <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
             <div className="px-4 py-3 flex items-center justify-between">
@@ -1978,7 +2514,67 @@ function SidePanel() {
           </div>
 
           {conversationStarted && !isRoundCompleted && !isViewingHistory && (
-            <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+              {understandingStatus && !showKnowledgePanel && (
+                <div className="px-4 pt-3">
+                  <button
+                    onClick={() => setShowStatusDetail(!showStatusDetail)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
+                      <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
+                      <span className="text-notion-border">|</span>
+                      <span className="text-green-600 dark:text-green-400">✓ {understandingStatus.mastered.length}已掌握</span>
+                      <span className="text-notion-border">|</span>
+                      <span className="text-amber-600 dark:text-amber-400">⚠ {understandingStatus.pendingClarification.length}待澄清</span>
+                      {isUpdatingStatus && (
+                        <svg className="w-3 h-3 animate-spin text-notion-accent" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      )}
+                      <svg className={`w-3 h-3 ml-auto transition-transform ${showStatusDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </button>
+                  <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                    <div className="overflow-hidden">
+                      <div className="pt-2 pb-1 space-y-2">
+                        {understandingStatus.mastered.length > 0 && (
+                          <div>
+                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {understandingStatus.mastered.map((item, idx) => (
+                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {understandingStatus.pendingClarification.length > 0 && (
+                          <div>
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {understandingStatus.pendingClarification.map((item, idx) => (
+                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="text-[11px] text-notion-text-secondary">
+                          <span className="font-medium">证据状态</span>: {understandingStatus.evidenceStatus}
+                        </div>
+                        {understandingStatus.nextThinkingDirection && (
+                          <div className="text-[11px] text-notion-text-secondary">
+                            <span className="font-medium">💡 下一步</span>: {understandingStatus.nextThinkingDirection}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="p-4 pt-2">
               {streamState.isStreaming ? (
                 <button
                   onClick={abortCurrentStream}
@@ -2022,17 +2618,73 @@ function SidePanel() {
                 </button>
               </div>
               )}
+              </div>
             </div>
           )}
 
           {conversationStarted && isRoundCompleted && !isViewingHistory && (
-            <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+              {understandingStatus && !showKnowledgePanel && (
+                <div className="px-4 pt-3">
+                  <button
+                    onClick={() => setShowStatusDetail(!showStatusDetail)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
+                      <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
+                      <span className="text-notion-border">|</span>
+                      <span className="text-green-600 dark:text-green-400">✓ {understandingStatus.mastered.length}已掌握</span>
+                      <span className="text-notion-border">|</span>
+                      <span className="text-amber-600 dark:text-amber-400">⚠ {understandingStatus.pendingClarification.length}待澄清</span>
+                      <svg className={`w-3 h-3 ml-auto transition-transform ${showStatusDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </div>
+                  </button>
+                  <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                    <div className="overflow-hidden">
+                      <div className="pt-2 pb-1 space-y-2">
+                        {understandingStatus.mastered.length > 0 && (
+                          <div>
+                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {understandingStatus.mastered.map((item, idx) => (
+                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {understandingStatus.pendingClarification.length > 0 && (
+                          <div>
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {understandingStatus.pendingClarification.map((item, idx) => (
+                                <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        <div className="text-[11px] text-notion-text-secondary">
+                          <span className="font-medium">证据状态</span>: {understandingStatus.evidenceStatus}
+                        </div>
+                        {understandingStatus.nextThinkingDirection && (
+                          <div className="text-[11px] text-notion-text-secondary">
+                            <span className="font-medium">💡 下一步</span>: {understandingStatus.nextThinkingDirection}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="p-4">
               <button
                 onClick={handleNewConversation}
                 className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95"
               >
                 开启新一轮对话
               </button>
+              </div>
             </div>
           )}
 

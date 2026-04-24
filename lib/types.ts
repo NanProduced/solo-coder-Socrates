@@ -91,6 +91,39 @@ export function generatePageKey(url: string): string {
   }
 }
 
+export interface UnderstandingStatus {
+  currentStage: string
+  mastered: string[]
+  pendingClarification: string[]
+  evidenceStatus: string
+  nextThinkingDirection: string
+  updatedAt: number
+}
+
+export interface KeyConcept {
+  name: string
+  description: string
+}
+
+export interface KnowledgeCard {
+  concept: string
+  explanation: string
+  keyPoints: string[]
+}
+
+export interface KnowledgeDocument {
+  pageKey: string
+  summary: string
+  keyConcepts: KeyConcept[]
+  knowledgeCards: KnowledgeCard[]
+  understandingStatus: UnderstandingStatus
+  exportedMarkdown?: string
+  createdAt: number
+  updatedAt: number
+  pageTitle: string
+  pageUrl: string
+}
+
 export function isSummaryRequest(content: string): boolean {
   const lower = content.toLowerCase().trim()
   if (SUMMARY_KEYWORDS.some((kw) => lower.includes(kw))) return true
