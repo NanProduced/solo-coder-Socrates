@@ -156,6 +156,15 @@ export async function deleteKnowledgeDocument(
   await chrome.storage.local.remove(key)
 }
 
+export async function deleteKnowledgeDocuments(
+  pageKeys: string[]
+): Promise<void> {
+  const keys = pageKeys.map((pk) => KNOWLEDGE_DOC_KEY_PREFIX + pk)
+  if (keys.length > 0) {
+    await chrome.storage.local.remove(keys)
+  }
+}
+
 export async function loadAllKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
   const allData = await chrome.storage.local.get(null)
   const docs: KnowledgeDocument[] = []

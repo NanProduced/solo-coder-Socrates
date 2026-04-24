@@ -1,5 +1,4 @@
 import { KnowledgeDocument } from "../lib/types"
-import { MarkdownMessage } from "./MarkdownMessage"
 
 interface KnowledgePanelProps {
   knowledgeDoc: KnowledgeDocument | null
@@ -8,6 +7,7 @@ interface KnowledgePanelProps {
   onClose: () => void
   onUpdate: () => void
   onExport: () => void
+  onBackToLibrary?: () => void
 }
 
 const formatTime = (timestamp: number): string => {
@@ -32,20 +32,32 @@ export const KnowledgePanel = ({
   onClose,
   onUpdate,
   onExport,
+  onBackToLibrary,
 }: KnowledgePanelProps) => {
   return (
     <div className="flex flex-col h-full">
       <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              className="text-notion-text-secondary hover:text-notion-text transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
+            {onBackToLibrary ? (
+              <button
+                onClick={onBackToLibrary}
+                className="text-notion-text-secondary hover:text-notion-text transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={onClose}
+                className="text-notion-text-secondary hover:text-notion-text transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            )}
             <h2 className="text-sm font-bold">知识文档</h2>
           </div>
           <div className="flex items-center gap-1">

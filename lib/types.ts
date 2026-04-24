@@ -126,6 +126,19 @@ export interface KnowledgeDocument {
   pageUrl: string
 }
 
+export interface CrossDocRelation {
+  conceptName: string
+  docPageKeys: string[]
+  relationType: "shared" | "complementary" | "dependency"
+  description: string
+}
+
+export interface CrossDocAnalysis {
+  relations: CrossDocRelation[]
+  suggestedPath: string[]
+  summary: string
+}
+
 export function isSummaryRequest(content: string): boolean {
   const lower = content.toLowerCase().trim()
   if (SUMMARY_KEYWORDS.some((kw) => lower.includes(kw))) return true

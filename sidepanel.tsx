@@ -11,6 +11,7 @@ import {
   isSummaryRequest,
   UnderstandingStatus,
   KnowledgeDocument,
+  CrossDocAnalysis,
 } from "./lib/types"
 import {
   loadPageConversations,
@@ -22,7 +23,11 @@ import {
   saveUnderstandingStatus,
   loadKnowledgeDocument,
   saveKnowledgeDocument,
+  loadAllKnowledgeDocuments,
+  deleteKnowledgeDocuments,
 } from "./lib/storage"
+import { KnowledgePanel } from "./components/KnowledgePanel"
+import { KnowledgeLibraryPanel } from "./components/KnowledgeLibraryPanel"
 import {
   extractPdfFromUrl,
   extractPdfViaInjection,
@@ -386,6 +391,14 @@ function SidePanel() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [showCompressedDetail, setShowCompressedDetail] = useState(false)
+
+  const [knowledgeTab, setKnowledgeTab] = useState<"detail" | "library">("detail")
+  const [allKnowledgeDocs, setAllKnowledgeDocs] = useState<KnowledgeDocument[]>([])
+  const [isLoadingLibrary, setIsLoadingLibrary] = useState(false)
+  const [crossDocAnalysis, setCrossDocAnalysis] = useState<CrossDocAnalysis | null>(null)
+  const [isAnalyzingRelations, setIsAnalyzingRelations] = useState(false)
+  const [isExportingAll, setIsExportingAll] = useState(false)
+  const [libraryDocKey, setLibraryDocKey] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -1040,9 +1053,19 @@ function SidePanel() {
     const existingDoc = await loadKnowledgeDocument(currentKey)
     if (existingDoc) {
       setKnowledgeDoc(existingDoc)
+      setKnowledgeTab("detail")
       setShowKnowledgePanel(true)
     } else {
-      generateKnowledgeDocument()
+      setKnowledgeTab("library")
+      setShowKnowledgePanel(true)
+      setIsLoadingLibrary(true)
+      try {
+        const docs = await loadAllKnowledgeDocuments()
+        setAllKnowledgeDocs(docs)
+      } catch {
+      } finally {
+        setIsLoadingLibrary(false)
+      }
     }
   }, [showKnowledgePanel, generateKnowledgeDocument])
 
@@ -1089,6 +1112,131 @@ function SidePanel() {
     }
   }, [knowledgeDoc, config])
 
+  const loadAllDocs = useCallback(async () => {
+    setIsLoadingLibrary(true)
+    try {
+      const docs = await loadAllKnowledgeDocuments()
+      setAllKnowledgeDocs(docs)
+    } catch {
+    } finally {
+      setIsLoadingLibrary(false)
+    }
+  }, [])
+
+  const handleOpenLibraryDoc = useCallback(async (pageKey: string) => {
+    const doc = await loadKnowledgeDocument(pageKey)
+    if (doc) {
+      setKnowledgeDoc(doc)
+      setLibraryDocKey(pageKey)
+      setKnowledgeTab("detail")
+    }
+  }, [])
+
+  const handleBackToLibrary = useCallback(() => {
+    setLibraryDocKey(null)
+    setKnowledgeTab("library")
+    loadAllDocs()
+  }, [loadAllDocs])
+
+  const handleDeleteDocs = useCallback(async (pageKeys: string[]) => {
+    await deleteKnowledgeDocuments(pageKeys)
+    setAllKnowledgeDocs((prev) => prev.filter((d) => !pageKeys.includes(d.pageKey)))
+    setCrossDocAnalysis(null)
+  }, [])
+
+  const handleExportAllDocs = useCallback(async () => {
+    if (allKnowledgeDocs.length === 0) return
+    setIsExportingAll(true)
+    try {
+      const allParts: string[] = []
+      for (const doc of allKnowledgeDocs) {
+        allParts.push(`# ${doc.pageTitle || "知识文档"}\n`)
+        allParts.push(`> 来源: ${doc.pageUrl}\n`)
+        allParts.push(`## 摘要\n${doc.summary}\n`)
+        allParts.push(`## 关键概念\n`)
+        for (const c of doc.keyConcepts) {
+          allParts.push(`- **${c.name}**: ${c.description}`)
+        }
+        allParts.push(`\n## 知识卡片\n`)
+        for (const card of doc.knowledgeCards) {
+          allParts.push(`### ${card.concept}\n${card.explanation}\n`)
+          for (const p of card.keyPoints) {
+            allParts.push(`- ${p}`)
+          }
+          allParts.push("")
+        }
+        allParts.push(`## 学习状态\n`)
+        allParts.push(`- 当前阶段: ${doc.understandingStatus.currentStage}`)
+        allParts.push(`- 已掌握: ${doc.understandingStatus.mastered.join("、")}`)
+        allParts.push(`- 待澄清: ${doc.understandingStatus.pendingClarification.join("、")}`)
+        allParts.push(`- 证据状态: ${doc.understandingStatus.evidenceStatus}`)
+        allParts.push(`- 下一步思考: ${doc.understandingStatus.nextThinkingDirection}`)
+        allParts.push("\n---\n")
+      }
+
+      const rawMarkdown = allParts.join("\n")
+      const dateStr = new Date().toLocaleDateString("zh-CN").replace(/\//g, "-")
+
+      try {
+        const polished = await callLLM(config, [
+          { id: "", role: "system", content: EXPORT_PROMPT, timestamp: Date.now(), visible: true },
+          { id: "", role: "user", content: rawMarkdown, timestamp: Date.now(), visible: true },
+        ], 8000)
+        downloadMarkdown(polished, `知识库总览_${dateStr}`)
+      } catch {
+        downloadMarkdown(rawMarkdown, `知识库总览_${dateStr}`)
+      }
+    } catch {
+    } finally {
+      setIsExportingAll(false)
+    }
+  }, [allKnowledgeDocs, config])
+
+  const handleAnalyzeRelations = useCallback(async () => {
+    if (allKnowledgeDocs.length < 2) return
+    setIsAnalyzingRelations(true)
+    try {
+      const docConcepts = allKnowledgeDocs.map((doc) => {
+        const concepts = doc.keyConcepts.map((c) => c.name)
+        return `文档"${doc.pageTitle}"的概念: [${concepts.join(", ")}]`
+      }).join("\n")
+
+      const prompt = `你是一个知识关联分析专家。以下是来自不同文档的知识概念列表，请分析它们之间的关联关系。
+
+${docConcepts}
+
+请分析：
+1. 哪些概念在不同文档中重复出现或相互补充？
+2. 建议的学习路径顺序是什么？
+3. 有哪些概念之间存在依赖关系？
+
+以 JSON 格式输出（不要包含代码块标记）：
+{
+  "relations": [
+    { "conceptName": "概念名", "docPageKeys": ["${allKnowledgeDocs[0]?.pageKey || ""}"], "relationType": "shared", "description": "关联描述" }
+  ],
+  "suggestedPath": ["文档1标题", "文档2标题"],
+  "summary": "整体关联摘要"
+}
+
+relationType 只能是 "shared"（共同概念）、"complementary"（互补）、"dependency"（依赖）之一。
+docPageKeys 必须是以下值之一: ${allKnowledgeDocs.map((d) => `"${d.pageKey}"`).join(", ")}
+suggestedPath 使用文档标题。`
+
+      const result = await callLLM(config, [
+        { id: "", role: "system", content: prompt, timestamp: Date.now(), visible: true },
+        { id: "", role: "user", content: "请分析以上文档之间的知识关联。", timestamp: Date.now(), visible: true },
+      ], 4000)
+
+      const analysis = parseLLMJson(result) as CrossDocAnalysis
+      setCrossDocAnalysis(analysis)
+    } catch {
+      setCrossDocAnalysis(null)
+    } finally {
+      setIsAnalyzingRelations(false)
+    }
+  }, [allKnowledgeDocs, config])
+
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -1102,6 +1250,10 @@ function SidePanel() {
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
         setKnowledgeDoc(null)
+        setKnowledgeTab("detail")
+        setLibraryDocKey(null)
+        setAllKnowledgeDocs([])
+        setCrossDocAnalysis(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
         return
@@ -1127,6 +1279,10 @@ function SidePanel() {
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
         setKnowledgeDoc(null)
+        setKnowledgeTab("detail")
+        setLibraryDocKey(null)
+        setAllKnowledgeDocs([])
+        setCrossDocAnalysis(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
         return
@@ -1173,6 +1329,10 @@ function SidePanel() {
       setShowHistoryPanel(false)
       setShowKnowledgePanel(false)
       setKnowledgeDoc(null)
+      setKnowledgeTab("detail")
+      setLibraryDocKey(null)
+      setAllKnowledgeDocs([])
+      setCrossDocAnalysis(null)
       setShowStatusDetail(false)
       setShowCompressedDetail(false)
       setErrorMessage(null)
@@ -1224,6 +1384,8 @@ function SidePanel() {
     setDeletingId(null)
     setShowHistoryPanel(true)
     setShowKnowledgePanel(false)
+    setKnowledgeTab("detail")
+    setLibraryDocKey(null)
   }
 
   const refreshHistoryPanel = async () => {
@@ -1957,17 +2119,47 @@ function SidePanel() {
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowKnowledgePanel(false)}
+                  onClick={() => {
+                    setShowKnowledgePanel(false)
+                    setLibraryDocKey(null)
+                  }}
                   className="text-notion-text-secondary hover:text-notion-text transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                 </button>
-                <h2 className="text-sm font-bold">知识文档</h2>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setKnowledgeTab("detail")
+                      setLibraryDocKey(null)
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                      knowledgeTab === "detail"
+                        ? "text-notion-accent bg-notion-accent/10"
+                        : "text-notion-text-secondary hover:bg-notion-hover"
+                    }`}
+                  >
+                    当前文档
+                  </button>
+                  <button
+                    onClick={() => {
+                      setKnowledgeTab("library")
+                      loadAllDocs()
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                      knowledgeTab === "library"
+                        ? "text-notion-accent bg-notion-accent/10"
+                        : "text-notion-text-secondary hover:bg-notion-hover"
+                    }`}
+                  >
+                    📚 知识库
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-1">
-                {knowledgeDoc && !isGeneratingDoc && (
+                {knowledgeTab === "detail" && knowledgeDoc && !isGeneratingDoc && !libraryDocKey && (
                   <>
                     <button
                       onClick={generateKnowledgeDocument}
@@ -1990,136 +2182,29 @@ function SidePanel() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto scrollbar-thin">
-            {isGeneratingDoc ? (
-              <div className="p-5 space-y-6">
-                <div className="animate-pulse">
-                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
-                  <div className="h-20 bg-notion-bg-secondary rounded-xl" />
-                </div>
-                <div className="animate-pulse">
-                  <div className="h-3 bg-notion-bg-secondary rounded w-20 mb-3" />
-                  <div className="flex gap-2 flex-wrap">
-                    <div className="h-6 w-16 bg-notion-bg-secondary rounded-full" />
-                    <div className="h-6 w-20 bg-notion-bg-secondary rounded-full" />
-                    <div className="h-6 w-14 bg-notion-bg-secondary rounded-full" />
-                  </div>
-                </div>
-                <div className="animate-pulse">
-                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
-                  <div className="space-y-3">
-                    <div className="h-24 bg-notion-bg-secondary rounded-xl" />
-                    <div className="h-24 bg-notion-bg-secondary rounded-xl" />
-                  </div>
-                </div>
-                <div className="animate-pulse">
-                  <div className="h-3 bg-notion-bg-secondary rounded w-16 mb-3" />
-                  <div className="h-32 bg-notion-bg-secondary rounded-xl" />
-                </div>
-              </div>
-            ) : knowledgeDoc ? (
-              <div className="p-5 space-y-6">
-                <div>
-                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">摘要</h3>
-                  <p className="text-sm text-notion-text leading-relaxed">{knowledgeDoc.summary}</p>
-                </div>
-
-                {knowledgeDoc.keyConcepts.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">关键概念</h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {knowledgeDoc.keyConcepts.map((concept, idx) => (
-                        <span
-                          key={idx}
-                          className="inline-flex items-center px-2.5 py-1 bg-notion-accent/10 text-notion-accent rounded-full text-xs font-medium"
-                        >
-                          {concept.name}
-                        </span>
-                      ))}
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {knowledgeDoc.keyConcepts.map((concept, idx) => (
-                        <div key={idx} className="text-xs text-notion-text-secondary">
-                          <span className="font-medium text-notion-text">{concept.name}</span>: {concept.description}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {knowledgeDoc.knowledgeCards.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">知识卡片</h3>
-                    <div className="space-y-3">
-                      {knowledgeDoc.knowledgeCards.map((card, idx) => (
-                        <div
-                          key={idx}
-                          className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30"
-                        >
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <div className="w-5 h-5 bg-notion-accent/10 rounded flex items-center justify-center flex-shrink-0">
-                              <span className="text-[10px] font-bold text-notion-accent">{idx + 1}</span>
-                            </div>
-                            <span className="text-sm font-semibold text-notion-text">{card.concept}</span>
-                          </div>
-                          <p className="text-xs text-notion-text-secondary mb-2 pl-7">{card.explanation}</p>
-                          {card.keyPoints.length > 0 && (
-                            <ul className="space-y-1 pl-7">
-                              {card.keyPoints.map((point, pIdx) => (
-                                <li key={pIdx} className="text-xs text-notion-text-secondary flex items-start gap-1.5">
-                                  <span className="text-notion-accent/60 mt-0.5 flex-shrink-0">·</span>
-                                  <span>{point}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">理解状态</h3>
-                  <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-notion-accent px-2 py-0.5 bg-notion-accent/10 rounded-full">
-                        {knowledgeDoc.understandingStatus.currentStage}
-                      </span>
-                      {knowledgeDoc.understandingStatus.mastered.length > 0 && (
-                        <span className="text-xs text-green-600 dark:text-green-400">✓ {knowledgeDoc.understandingStatus.mastered.length} 已掌握</span>
-                      )}
-                      {knowledgeDoc.understandingStatus.pendingClarification.length > 0 && (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">⚠ {knowledgeDoc.understandingStatus.pendingClarification.length} 待澄清</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-notion-text-secondary">
-                      理解信心: {knowledgeDoc.understandingStatus.evidenceStatus}
-                    </div>
-                    {knowledgeDoc.understandingStatus.nextThinkingDirection && (
-                      <div className="text-xs text-notion-text-secondary">
-                        💡 {knowledgeDoc.understandingStatus.nextThinkingDirection}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="text-center pt-2 pb-4">
-                  <span className="text-[10px] text-notion-text-secondary opacity-60">
-                    更新于 {formatTime(knowledgeDoc.updatedAt)}
-                  </span>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 px-8 text-center">
-                <svg className="w-12 h-12 text-notion-border mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
-                <p className="text-sm text-notion-text-secondary">暂无知识文档</p>
-                <p className="text-xs text-notion-text-secondary mt-1 opacity-60">开始对话后，点击生成知识文档</p>
-              </div>
-            )}
-          </div>
+          {knowledgeTab === "detail" ? (
+            <KnowledgePanel
+              knowledgeDoc={knowledgeDoc}
+              isGeneratingDoc={isGeneratingDoc}
+              isExporting={isExporting}
+              onClose={() => setShowKnowledgePanel(false)}
+              onUpdate={generateKnowledgeDocument}
+              onExport={handleExportMarkdown}
+              onBackToLibrary={libraryDocKey ? handleBackToLibrary : undefined}
+            />
+          ) : (
+            <KnowledgeLibraryPanel
+              allDocs={allKnowledgeDocs}
+              isLoading={isLoadingLibrary}
+              onOpenDoc={handleOpenLibraryDoc}
+              onDeleteDocs={handleDeleteDocs}
+              onExportAll={handleExportAllDocs}
+              onAnalyzeRelations={handleAnalyzeRelations}
+              crossDocAnalysis={crossDocAnalysis}
+              isAnalyzing={isAnalyzingRelations}
+              isExporting={isExportingAll}
+            />
+          )}
         </div>
       ) : showHistoryPanel ? (
         <div className="flex flex-col h-full">
