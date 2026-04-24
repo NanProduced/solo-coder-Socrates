@@ -51,6 +51,7 @@ import {
   getCompressedRoundCount,
 } from "./lib/context-compress"
 import "./style.css"
+import { KnowledgeLibrary } from "./components/KnowledgeLibrary"
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
 
@@ -386,6 +387,8 @@ function SidePanel() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [showCompressedDetail, setShowCompressedDetail] = useState(false)
+
+  const [showKnowledgeLibrary, setShowKnowledgeLibrary] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -1937,6 +1940,19 @@ function SidePanel() {
             </svg>
             <span>历史</span>
           </button>
+          <button
+            onClick={() => {
+              setShowKnowledgeLibrary(true)
+              setShowKnowledgePanel(false)
+              setShowHistoryPanel(false)
+            }}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-colors ${showKnowledgeLibrary ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            <span>知识库</span>
+          </button>
           {conversationStarted && !isViewingHistory && (
             <button
               onClick={handleNewConversation}
@@ -1951,7 +1967,17 @@ function SidePanel() {
         </div>
       </header>
 
-      {showKnowledgePanel ? (
+      {showKnowledgeLibrary ? (
+        <KnowledgeLibrary
+          onBack={() => setShowKnowledgeLibrary(false)}
+          onViewDocument={(doc) => {
+            setKnowledgeDoc(doc)
+            setShowKnowledgePanel(true)
+            setShowKnowledgeLibrary(false)
+          }}
+          onViewAllKnowledge={() => {}}
+        />
+      ) : showKnowledgePanel ? (
         <div className="flex flex-col h-full">
           <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border">
             <div className="px-4 py-3 flex items-center justify-between">
