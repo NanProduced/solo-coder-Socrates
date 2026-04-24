@@ -1666,7 +1666,7 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
-      const messagesWithInstruction = [...baseMessages, internalInstruction]
+      const messagesWithInstruction = [...baseMessages, userActionMessage, internalInstruction]
       const rawText = await callLLMStream(
         config,
         messagesWithInstruction,
