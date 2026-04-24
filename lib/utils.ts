@@ -1,3 +1,5 @@
+import { UnderstandingStatus, KnowledgeDocument, KeyConcept, KnowledgeCard } from "./types"
+
 export function parseLLMJson(text: string): any {
   let cleaned = text.trim()
   const codeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
@@ -63,4 +65,86 @@ export function extractHostname(url: string): string {
   } catch {
     return url
   }
+}
+
+export function buildStatusContext(status: UnderstandingStatus | null): string {
+  if (!status) return ""
+  const parts = [
+    `[当前学习状态]`,
+    `阶段: ${status.currentStage}`,
+  ]
+  if (status.mastered.length > 0) {
+    parts.push(`已掌握: ${status.mastered.join("、")}`)
+  }
+  if (status.pendingClarification.length > 0) {
+    parts.push(`待澄清: ${status.pendingClarification.join("、")}`)
+  }
+  if (status.nextThinkingDirection) {
+    parts.push(`建议思考方向: ${status.nextThinkingDirection}`)
+  }
+  parts.push(`请根据以上状态调整提问策略：对已掌握的概念可以深入追问，对待澄清的概念应从不同角度引导。`)
+  return parts.join("\n")
+}
+
+export function mergeKnowledgeDoc(
+  oldDoc: KnowledgeDocument | null,
+  updates: {
+    summary?: string
+    keyConcepts?: KeyConcept[]
+    knowledgeCards?: KnowledgeCard[]
+    understandingStatus?: UnderstandingStatus
+  }
+): KnowledgeDocument {
+  if (!oldDoc) {
+    return updates as KnowledgeDocument
+  }
+  return {
+    ...oldDoc,
+    summary: updates.summary ?? oldDoc.summary,
+    keyConcepts: updates.keyConcepts
+      ? mergeConcepts(oldDoc.keyConcepts, updates.keyConcepts)
+      : oldDoc.keyConcepts,
+    knowledgeCards: updates.knowledgeCards ?? oldDoc.knowledgeCards,
+    understandingStatus: updates.understandingStatus ?? oldDoc.understandingStatus,
+    updatedAt: Date.now(),
+    createdAt: oldDoc.createdAt,
+    pageTitle: oldDoc.pageTitle,
+    pageUrl: oldDoc.pageUrl,
+    pageKey: oldDoc.pageKey,
+  }
+}
+
+function mergeConcepts(old: KeyConcept[], updated: KeyConcept[]): KeyConcept[] {
+  const map = new Map(old.map(c => [c.name, c]))
+  for (const c of updated) {
+    map.set(c.name, c)
+  }
+  return Array.from(map.values())
+}
+
+export function findRelatedConcepts(
+  currentConcepts: string[],
+  allDocs: KnowledgeDocument[],
+  currentDocKey: string
+): { docTitle: string; concept: string; description: string }[] {
+  const currentSet = new Set(currentConcepts.map(c => c.toLowerCase()))
+  const related: { docTitle: string; concept: string; description: string }[] = []
+
+  for (const doc of allDocs) {
+    if (doc.pageKey === currentDocKey) continue
+    for (const concept of doc.keyConcepts) {
+      const nameLower = concept.name.toLowerCase()
+      if (currentSet.has(nameLower) ||
+          currentConcepts.some(c =>
+            nameLower.includes(c.toLowerCase()) || c.toLowerCase().includes(nameLower)
+          )) {
+        related.push({
+          docTitle: doc.pageTitle,
+          concept: concept.name,
+          description: concept.description,
+        })
+      }
+    }
+  }
+  return related.slice(0, 5)
 }

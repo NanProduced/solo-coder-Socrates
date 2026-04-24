@@ -31,13 +31,10 @@ import { KnowledgeLibraryPanel } from "./components/KnowledgeLibraryPanel"
 import { MarkdownMessage } from "./components/MarkdownMessage"
 import { UnderstandingStatusBar } from "./components/UnderstandingStatusBar"
 import {
-  extractPdfFromUrl,
-  extractPdfViaInjection,
-  isPdfUrl,
   isFileUrl,
-  getCookiesForUrl,
   checkFileSchemeAccess,
 } from "./lib/pdf-extract"
+import { getPageContent } from "./lib/page-extract"
 import {
   smartTruncate,
   buildContextPrompt,
@@ -72,6 +69,9 @@ import {
   formatTime,
   formatDateGroup,
   extractHostname,
+  buildStatusContext,
+  mergeKnowledgeDoc,
+  findRelatedConcepts,
 } from "./lib/utils"
 import "./style.css"
 
@@ -206,346 +206,8 @@ function SidePanel() {
   const generateId = () =>
     Date.now().toString() + Math.random().toString(36).slice(2, 11)
 
-  const getPageContent = async (): Promise<{
-    title: string
-    content: string
-    url: string
-    contextPrompt: string
-    error?: string
-  }> => {
-    try {
-      const [tab] = await chrome.tabs.query({
-        active: true,
-        currentWindow: true,
-      })
-      if (!tab?.id || !tab.url) {
-        return { title: "", content: "", url: "", contextPrompt: "", error: "无法获取当前标签页信息" }
-      }
-
-      const pageUrl = tab.url
-
-      if (isPdfUrl(pageUrl)) {
-        if (isFileUrl(pageUrl)) {
-          return await extractLocalPdfContent(tab.id, pageUrl)
-        }
-        return await extractOnlinePdfContent(tab.id, pageUrl)
-      }
-
-      return await extractWebContent(tab.id, pageUrl)
-    } catch (error) {
-      console.error("Failed to get page content:", error)
-      return { title: "", content: "", url: "", contextPrompt: "", error: "页面内容提取失败" }
-    }
-  }
-
-  const extractOnlinePdfContent = async (tabId: number, url: string) => {
-    try {
-      const cookies = await getCookiesForUrl(url)
-      const result = await extractPdfFromUrl(url, cookies || undefined)
-
-      if (result.success && result.content) {
-        const meta: ContentMeta = {
-          title: result.title,
-          excerpt: result.content.slice(0, 200),
-          byline: "",
-          siteName: "",
-          url,
-        }
-        const truncatedContent = smartTruncate(result.content, meta)
-        const contextPrompt = buildContextPrompt(meta, truncatedContent)
-
-        return {
-          title: result.title,
-          content: result.content,
-          url,
-          contextPrompt,
-        }
-      }
-
-      return await extractPdfViaInjectionFallback(tabId, url, result.error)
-    } catch (error) {
-      return await extractPdfViaInjectionFallback(tabId, url, error instanceof Error ? error.message : "PDF 提取失败")
-    }
-  }
-
-  const extractPdfViaInjectionFallback = async (
-    tabId: number,
-    url: string,
-    previousError?: string
-  ) => {
-    try {
-      const result = await extractPdfViaInjection(tabId, url)
-
-      if (result.success && result.content) {
-        const meta: ContentMeta = {
-          title: result.title,
-          excerpt: result.content.slice(0, 200),
-          byline: "",
-          siteName: "",
-          url,
-        }
-        const truncatedContent = smartTruncate(result.content, meta)
-        const contextPrompt = buildContextPrompt(meta, truncatedContent)
-
-        return {
-          title: result.title,
-          content: result.content,
-          url,
-          contextPrompt,
-        }
-      }
-
-      return {
-        title: "",
-        content: "",
-        url,
-        contextPrompt: "",
-        error: `PDF 内容提取失败：${result.error || previousError || "未知错误"}`,
-      }
-    } catch {
-      return {
-        title: "",
-        content: "",
-        url,
-        contextPrompt: "",
-        error: `PDF 内容提取失败：${previousError || "未知错误"}`,
-      }
-    }
-  }
-
-  const extractLocalPdfContent = async (tabId: number, url: string) => {
-    try {
-      const result = await extractPdfViaInjection(tabId, url)
-
-      if (result.success && result.content) {
-        const meta: ContentMeta = {
-          title: result.title,
-          excerpt: result.content.slice(0, 200),
-          byline: "",
-          siteName: "",
-          url,
-        }
-        const truncatedContent = smartTruncate(result.content, meta)
-        const contextPrompt = buildContextPrompt(meta, truncatedContent)
-
-        return {
-          title: result.title,
-          content: result.content,
-          url,
-          contextPrompt,
-        }
-      }
-    } catch (error) {
-      console.error("Local PDF extraction failed:", error)
-    }
-    return { title: "", content: "", url: "", contextPrompt: "", error: "本地 PDF 提取失败，请确认已开启文件访问权限" }
-  }
-
-  const extractWebContent = async (tabId: number, pageUrl: string) => {
-    try {
-      const response = await sendTabMessage(tabId, { type: "EXTRACT_CONTENT" })
-
-      if (response?.isPdfViewer) {
-        return await extractOnlinePdfContent(tabId, pageUrl)
-      }
-
-      if (response?.success && response.content) {
-        const meta: ContentMeta = {
-          title: response.title || "",
-          excerpt: response.excerpt || "",
-          byline: response.byline || "",
-          siteName: response.siteName || "",
-          url: pageUrl,
-        }
-        const truncatedContent = smartTruncate(response.content, meta)
-        const contextPrompt = buildContextPrompt(meta, truncatedContent)
-
-        return {
-          title: meta.title,
-          content: response.content,
-          url: pageUrl,
-          contextPrompt,
-        }
-      }
-
-      if (response?.error === "PAGE_CONTENT_TOO_SHORT") {
-        return {
-          title: response.title || "",
-          content: "",
-          url: pageUrl,
-          contextPrompt: "",
-          error: "页面内容过少，无法提取有效信息。请确认页面已完全加载。",
-        }
-      }
-
-      if (response && !response.success) {
-        return {
-          title: response.title || "",
-          content: "",
-          url: pageUrl,
-          contextPrompt: "",
-          error: "页面内容提取失败，请确认页面已完全加载后重试。",
-        }
-      }
-    } catch (error) {
-      console.warn(
-        "Content script not available, falling back to executeScript:",
-        error
-      )
-    }
-
-    return await extractWithScriptInjection(tabId, pageUrl)
-  }
-
-  const sendTabMessage = (
-    tabId: number,
-    message: { type: string }
-  ): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Content script timeout"))
-      }, 2000)
-
-      try {
-        chrome.tabs.sendMessage(tabId, message, (response) => {
-          clearTimeout(timeout)
-          if (chrome.runtime.lastError) {
-            const errMsg = chrome.runtime.lastError.message || ""
-            if (
-              errMsg.includes("Extension context invalidated") ||
-              errMsg.includes("message channel is closed")
-            ) {
-              setContextInvalidated(true)
-              reject(new Error("扩展上下文已失效，请刷新页面后重试"))
-            } else {
-              reject(new Error(errMsg))
-            }
-          } else {
-            resolve(response)
-          }
-        })
-      } catch {
-        clearTimeout(timeout)
-        setContextInvalidated(true)
-        reject(new Error("扩展上下文已失效，请刷新页面后重试"))
-      }
-    })
-  }
-
-  const extractWithScriptInjection = async (
-    tabId: number,
-    pageUrl: string,
-    skipPdfRedirect: boolean = false
-  ) => {
-    try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const embedEl = document.querySelector(
-            'embed[type="application/pdf"], object[type="application/pdf"]'
-          )
-          if (embedEl) {
-            return { isPdfViewer: true, title: document.title || "", content: "", url: window.location.href }
-          }
-
-          const title = document.title || ""
-          let content = ""
-
-          const removeSelectors = [
-            "script",
-            "style",
-            "noscript",
-            "nav",
-            "header",
-            "footer",
-            "iframe",
-            '[role="navigation"]',
-            '[role="banner"]',
-            '[role="contentinfo"]',
-            ".ad",
-            ".ads",
-            ".sidebar",
-            ".comment",
-            ".social-share",
-            ".cookie-banner",
-          ]
-
-          const mainContent = document.querySelector(
-            'main, article, [role="main"], .post-content, .article-content, .entry-content, #content'
-          )
-
-          const source = mainContent || document.body
-          const clone = source.cloneNode(true) as HTMLElement
-
-          removeSelectors.forEach((sel) => {
-            try {
-              clone.querySelectorAll(sel).forEach((node) => node.remove())
-            } catch {}
-          })
-
-          content = clone.innerText || document.body.innerText
-
-          return { isPdfViewer: false, title, content, url: window.location.href }
-        },
-      })
-
-      if (results && results[0]?.result) {
-        const result = results[0].result as {
-          isPdfViewer: boolean
-          title: string
-          content: string
-          url: string
-        }
-
-        if (result.isPdfViewer && !skipPdfRedirect) {
-          return await extractOnlinePdfContent(tabId, pageUrl)
-        }
-
-        if (result.isPdfViewer && skipPdfRedirect) {
-          return {
-            title: result.title,
-            content: "",
-            url: result.url,
-            contextPrompt: "",
-            error: "PDF 内容提取失败，无法读取该 PDF 文件。",
-          }
-        }
-
-        if (result.content && result.content.length > 50) {
-          const meta: ContentMeta = {
-            title: result.title,
-            excerpt: result.content.slice(0, 200),
-            byline: "",
-            siteName: "",
-            url: pageUrl,
-          }
-          const truncatedContent = smartTruncate(result.content, meta)
-          const contextPrompt = buildContextPrompt(meta, truncatedContent)
-
-          return {
-            title: result.title,
-            content: result.content,
-            url: result.url,
-            contextPrompt,
-          }
-        }
-
-        return {
-          title: result.title,
-          content: "",
-          url: result.url,
-          contextPrompt: "",
-          error: "页面内容过少，无法提取有效信息。请确认页面已完全加载。",
-        }
-      }
-    } catch (error) {
-      console.error("Script injection fallback failed:", error)
-    }
-    return { title: "", content: "", url: "", contextPrompt: "", error: "无法提取页面内容，可能是浏览器限制页面" }
-  }
-
   getPageContentRef.current = async (): Promise<string> => {
-    const result = await getPageContent()
+    const result = await getPageContent(() => setContextInvalidated(true))
     return result.contextPrompt || result.content
   }
 
@@ -572,20 +234,37 @@ function SidePanel() {
     const visibleMessages = round.messages.filter((m) => m.visible)
     if (visibleMessages.length === 0) return ""
 
+    const statusCtx = buildStatusContext(understandingStatus)
+
+    const currentDoc = allKnowledgeDocs.find(d => d.pageKey === pageKeyRef.current)
+    let relatedCtx = ""
+    if (currentDoc && allKnowledgeDocs.length > 1) {
+      const related = findRelatedConcepts(
+        currentDoc.keyConcepts.map(c => c.name),
+        allKnowledgeDocs,
+        pageKeyRef.current
+      )
+      if (related.length > 0) {
+        relatedCtx = "\n\n[知识库中的相关概念]\n" + related.map(r =>
+          `- "${r.concept}"（来自: ${r.docTitle}）: ${r.description}`
+        ).join("\n")
+      }
+    }
+
     if (round.compressedSummary && round.compressedBeforeMessageId) {
       const boundaryIndex = visibleMessages.findIndex((m) => m.id === round.compressedBeforeMessageId)
       const recentMessages = boundaryIndex >= 0 ? visibleMessages.slice(boundaryIndex) : visibleMessages
       const contextLines = recentMessages.map(
         (m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`
       )
-      return "\n\n--- 对话历史（含早期摘要） ---\n[早期摘要]: " + round.compressedSummary + "\n" + contextLines.join("\n")
+      return "\n\n--- 对话历史（含早期摘要） ---\n[早期摘要]: " + round.compressedSummary + "\n" + contextLines.join("\n") + (statusCtx ? "\n\n" + statusCtx : "") + relatedCtx
     }
 
     const contextLines = visibleMessages.map(
       (m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`
     )
-    return "\n\n--- 对话历史 ---\n" + contextLines.join("\n")
-  }, [rounds, activeRoundId])
+    return "\n\n--- 对话历史 ---\n" + contextLines.join("\n") + (statusCtx ? "\n\n" + statusCtx : "") + relatedCtx
+  }, [rounds, activeRoundId, understandingStatus, allKnowledgeDocs])
 
   const updateUnderstandingStatus = useCallback(async () => {
     const currentKey = pageKeyRef.current
@@ -681,6 +360,7 @@ function SidePanel() {
     setIsGeneratingDoc(true)
     setShowKnowledgePanel(true)
     try {
+      const existingDoc = await loadKnowledgeDocument(currentKey)
       const content = await getPageContentRef.current()
       const conversationContext = buildConversationContext()
       const userContent = content + conversationContext
@@ -704,19 +384,21 @@ function SidePanel() {
         callLLM(config, statusMessages, 2000),
       ])
 
-      const summary = summaryResult.status === "fulfilled" ? summaryResult.value : "摘要生成失败，请尝试更新"
+      const summary = summaryResult.status === "fulfilled"
+        ? summaryResult.value
+        : existingDoc?.summary ?? "摘要生成失败，请尝试更新"
 
-      let keyConcepts: { name: string; description: string }[] = []
-      let knowledgeCards: { concept: string; explanation: string; keyPoints: string[] }[] = []
+      let keyConcepts = existingDoc?.keyConcepts ?? []
+      let knowledgeCards = existingDoc?.knowledgeCards ?? []
       if (conceptsResult.status === "fulfilled") {
         try {
           const parsed = parseLLMJson(conceptsResult.value)
-          keyConcepts = Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts : []
-          knowledgeCards = Array.isArray(parsed.knowledgeCards) ? parsed.knowledgeCards : []
+          if (Array.isArray(parsed.keyConcepts)) keyConcepts = parsed.keyConcepts
+          if (Array.isArray(parsed.knowledgeCards)) knowledgeCards = parsed.knowledgeCards
         } catch {}
       }
 
-      let docStatus: UnderstandingStatus = {
+      let docStatus = existingDoc?.understandingStatus ?? {
         currentStage: "初步接触",
         mastered: [],
         pendingClarification: [],
@@ -728,33 +410,27 @@ function SidePanel() {
         try {
           const parsed = parseLLMJson(statusResult.value)
           docStatus = {
-            currentStage: parsed.currentStage || "初步接触",
-            mastered: Array.isArray(parsed.mastered) ? parsed.mastered : [],
-            pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : [],
-            evidenceStatus: parsed.evidenceStatus || "低",
-            nextThinkingDirection: parsed.nextThinkingDirection || "",
+            currentStage: parsed.currentStage || docStatus.currentStage,
+            mastered: Array.isArray(parsed.mastered) ? parsed.mastered : docStatus.mastered,
+            pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : docStatus.pendingClarification,
+            evidenceStatus: parsed.evidenceStatus || docStatus.evidenceStatus,
+            nextThinkingDirection: parsed.nextThinkingDirection || docStatus.nextThinkingDirection,
             updatedAt: Date.now(),
           }
         } catch {}
       }
 
-      const existingDoc = await loadKnowledgeDocument(currentKey)
-      const doc: KnowledgeDocument = {
-        pageKey: currentKey,
+      const doc = mergeKnowledgeDoc(existingDoc, {
         summary,
         keyConcepts,
         knowledgeCards,
         understandingStatus: docStatus,
-        createdAt: existingDoc?.createdAt || Date.now(),
-        updatedAt: Date.now(),
-        pageTitle,
-        pageUrl,
-      }
+      })
 
       await saveKnowledgeDocument(currentKey, doc)
       setKnowledgeDoc(doc)
-      await saveUnderstandingStatus(currentKey, docStatus)
-      setUnderstandingStatus(docStatus)
+      await saveUnderstandingStatus(currentKey, doc.understandingStatus)
+      setUnderstandingStatus(doc.understandingStatus)
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : "知识文档生成失败")
     } finally {
@@ -1241,11 +917,12 @@ suggestedPath 使用文档标题。`
       const roundId = generateId()
 
       const systemPrompt = mode === "guided" ? SOCRATES_GUIDED_PROMPT : SOCRATES_SYSTEM_PROMPT
+      const statusCtx = buildStatusContext(understandingStatus)
 
       const initialMessage: Message = {
         id: generateId(),
         role: "system",
-        content: systemPrompt + "\n\n" + contextPrompt,
+        content: systemPrompt + "\n\n" + contextPrompt + (statusCtx ? "\n\n" + statusCtx : ""),
         timestamp: Date.now(),
         visible: false
       }
@@ -1461,6 +1138,10 @@ suggestedPath 使用文档标题。`
         roundForLLM = compressed
       }
       const messagesForLLM = buildCompressedMessages(roundForLLM)
+      const statusCtx = buildStatusContext(understandingStatus)
+      if (statusCtx && messagesForLLM.length > 0 && messagesForLLM[0].role === "system") {
+        messagesForLLM[0] = { ...messagesForLLM[0], content: messagesForLLM[0].content + "\n\n" + statusCtx }
+      }
       const rawText = await callLLMStream(
         config,
         messagesForLLM,

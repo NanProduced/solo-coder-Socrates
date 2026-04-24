@@ -159,3 +159,20 @@ export async function callLLMStream(
     if (signal) signal.removeEventListener("abort", onAbort)
   }
 }
+
+export async function testApiConnection(config: OpenAIConfig): Promise<{ success: boolean; message: string }> {
+  if (!config.apiKey || !config.baseURL) {
+    return { success: false, message: "请先填写 API 地址和密钥" }
+  }
+  try {
+    await callLLM(config, [
+      { id: "", role: "user", content: "Hi", timestamp: Date.now(), visible: true }
+    ], 5)
+    return { success: true, message: `连接成功，模型: ${config.model}` }
+  } catch (err) {
+    return {
+      success: false,
+      message: err instanceof LLMError ? err.message : "连接失败，请检查配置"
+    }
+  }
+}

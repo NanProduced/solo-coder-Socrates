@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
 import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
+import { testApiConnection } from "./lib/llm"
 import "./style.css"
 
 function OptionsPage() {
@@ -11,6 +12,8 @@ function OptionsPage() {
   const [model, setModel] = useState("")
   const [saved, setSaved] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [isTesting, setIsTesting] = useState(false)
 
   useEffect(() => {
     if (config) {
@@ -22,6 +25,7 @@ function OptionsPage() {
 
   const handleSave = () => {
     setValidationError(null)
+    setTestResult(null)
     const trimmedBaseURL = baseURL.trim()
     const trimmedApiKey = apiKey.trim()
     const trimmedModel = model.trim()
@@ -36,9 +40,21 @@ function OptionsPage() {
     setTimeout(() => setSaved(false), 2500)
   }
 
+  const handleTest = async () => {
+    setIsTesting(true)
+    setTestResult(null)
+    const testConfig: OpenAIConfig = {
+      baseURL: baseURL.trim(),
+      apiKey: apiKey.trim(),
+      model: model.trim(),
+    }
+    const result = await testApiConnection(testConfig)
+    setTestResult(result)
+    setIsTesting(false)
+  }
+
   return (
     <div className="flex min-h-screen bg-notion-bg text-notion-text transition-colors duration-300">
-      {/* 左侧装饰性侧边栏 */}
       <aside className="w-64 border-r border-notion-border bg-notion-bg-secondary flex flex-col p-6 hidden md:flex">
         <div className="flex items-center gap-3 mb-10">
           <div className="w-8 h-8 bg-notion-accent rounded-lg flex items-center justify-center shadow-sm">
@@ -61,9 +77,7 @@ function OptionsPage() {
         </div>
       </aside>
 
-      {/* 主内容区 */}
       <main className="flex-1 p-8 md:p-16 max-w-4xl overflow-y-auto relative">
-        {/* 背景希腊石柱装饰 - 极简极淡 */}
         <div className="absolute top-0 right-0 opacity-[0.03] pointer-events-none select-none dark:opacity-[0.05]">
            <svg width="400" height="600" viewBox="0 0 400 600" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M100 50H300M120 50V550M280 50V550M150 50V550M180 50V550M220 50V550M250 50V550" stroke="currentColor" strokeWidth="2" />
@@ -78,7 +92,6 @@ function OptionsPage() {
           </header>
 
           <section className="space-y-8 max-w-xl">
-            {/* 配置项卡片 */}
             <div className="space-y-6">
               <div className="group">
                 <label className="block text-xs font-bold text-notion-text-secondary mb-2 group-focus-within:text-notion-accent transition-colors">
@@ -87,7 +100,7 @@ function OptionsPage() {
                 <input
                   type="text"
                   value={baseURL}
-                  onChange={(e) => { setBaseURL(e.target.value); setValidationError(null) }}
+                  onChange={(e) => { setBaseURL(e.target.value); setValidationError(null); setTestResult(null) }}
                   placeholder="https://api.openai.com/v1"
                   className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30"
                 />
@@ -101,7 +114,7 @@ function OptionsPage() {
                   <input
                     type="password"
                     value={apiKey}
-                    onChange={(e) => { setApiKey(e.target.value); setValidationError(null) }}
+                    onChange={(e) => { setApiKey(e.target.value); setValidationError(null); setTestResult(null) }}
                     placeholder="sk-••••••••••••••••"
                     className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30 font-mono"
                   />
@@ -118,7 +131,7 @@ function OptionsPage() {
                 <input
                   type="text"
                   value={model}
-                  onChange={(e) => { setModel(e.target.value); setValidationError(null) }}
+                  onChange={(e) => { setModel(e.target.value); setValidationError(null); setTestResult(null) }}
                   placeholder="gpt-4o"
                   className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30"
                 />
@@ -129,6 +142,22 @@ function OptionsPage() {
               <div className="flex items-center gap-2 px-4 py-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-xl text-red-600 dark:text-red-400 text-sm animate-shake">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 {validationError}
+              </div>
+            )}
+
+            {testResult && (
+              <div className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm border ${
+                testResult.success
+                  ? "bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800 text-green-600 dark:text-green-400"
+                  : "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400"
+              }`}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {testResult.success
+                    ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  }
+                </svg>
+                {testResult.message}
               </div>
             )}
 
@@ -150,11 +179,27 @@ function OptionsPage() {
                   智慧已连接
                 </span>
               </button>
+
+              <button
+                onClick={handleTest}
+                disabled={isTesting || !baseURL.trim() || !apiKey.trim() || !model.trim()}
+                className="px-6 py-3 rounded-xl font-bold text-sm border border-notion-border text-notion-text-secondary hover:bg-notion-hover hover:text-notion-text transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isTesting ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    测试中...
+                  </span>
+                ) : "测试连接"}
+              </button>
             </div>
           </section>
 
           <footer className="mt-20 pt-8 border-t border-notion-border/50 text-xs text-notion-text-secondary flex flex-col gap-2">
-            <p>· 你的 API 密钥将通过 chrome.storage.local 加密存储，绝不会上传至第三方服务器。</p>
+            <p>· 你的 API 密钥将通过 chrome.storage.local 本地安全存储，绝不会上传至第三方服务器。</p>
             <p>· 建议使用支持长上下文的模型以获得最佳的阅读理解体验。</p>
           </footer>
         </div>
