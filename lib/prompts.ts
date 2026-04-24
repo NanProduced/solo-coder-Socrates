@@ -1,3 +1,27 @@
+import type { UnderstandingStatus } from "./types"
+
+export const LEARNING_STATUS_STRATEGY = `
+## 学习状态感知策略
+当对话中包含用户的学习状态时，请遵循以下策略：
+
+### 状态感知规则
+1. **避开已掌握** - 不要在已掌握的知识点上浪费时间，不要重复提问用户已经理解的内容
+2. **优先追问待澄清** - 优先选择待澄清列表中的问题进行深入探讨，帮助用户扫清理解盲区
+3. **按信心调整深度**：
+   - 信心"低" → 从基础概念开始，用更简单的方式提问
+   - 信心"中" → 保持当前深度，适度推进
+   - 信心"高" → 可以提出更深入、更具挑战性的问题
+4. **结合学习阶段**：
+   - 初步接触 → 聚焦核心概念理解
+   - 建立框架 → 关注概念之间的关联
+   - 深入理解 → 探索应用场景和边界条件
+   - 融会贯通 → 引导综合应用和批判性思考
+
+### 问题设计原则
+- 如果待澄清列表非空，下一个问题最好与其中某个待澄清的点相关
+- 如果所有已掌握的知识点都很扎实，可以尝试引入新的角度或相关概念
+- 当用户回答显示出新的理解时，假设状态可能已经更新，继续推进但保持灵活`
+
 export const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
 
 ## 核心原则
@@ -9,6 +33,7 @@ export const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲�
 3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
 4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
 5. **总结模式绝对禁止追问** - 当进入总结模式时，只输出总结内容，不要提出任何问题
+${LEARNING_STATUS_STRATEGY}
 
 ## 对话流程
 1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题
@@ -57,6 +82,7 @@ export const SOCRATES_GUIDED_PROMPT = `你是苏格拉底，一位伟大的哲�
    - 连续答对 → 可以出综合理解题
 5. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
 6. **总结模式禁止出选项** - 总结时只输出总结文本
+${LEARNING_STATUS_STRATEGY}
 
 ## 对话流程
 1. 开始时，基于文档内容出一个关于核心主题的选择题
@@ -154,3 +180,37 @@ export const EXPORT_PROMPT = `你是一个知识文档编辑器。请将以下�
 - 在文档末尾添加"学习状态"章节
 - 不要添加原文中没有的信息，但可以优化表达方式
 - 直接输出 Markdown 文本，不要包含代码块标记`
+
+export function buildLearningStatusContext(status: UnderstandingStatus | null): string {
+  if (!status) return ""
+
+  const lines: string[] = []
+  lines.push("--- 用户学习状态 ---")
+
+  if (status.currentStage) {
+    lines.push(`学习阶段: ${status.currentStage}`)
+  }
+
+  if (status.mastered && status.mastered.length > 0) {
+    lines.push(`已掌握: ${status.mastered.join("、")}`)
+  } else {
+    lines.push("已掌握: 无")
+  }
+
+  if (status.pendingClarification && status.pendingClarification.length > 0) {
+    lines.push(`待澄清: ${status.pendingClarification.join("、")}`)
+  } else {
+    lines.push("待澄清: 无")
+  }
+
+  if (status.evidenceStatus) {
+    lines.push(`理解信心: ${status.evidenceStatus}`)
+  }
+
+  if (status.nextThinkingDirection) {
+    lines.push(`下一步思考: ${status.nextThinkingDirection}`)
+  }
+
+  lines.push("------------------")
+  return lines.join("\n")
+}
