@@ -38,6 +38,10 @@ import {
 } from "./lib/content-utils"
 import { callLLMStream, callLLM, LLMError } from "./lib/llm"
 import {
+  compressMessages,
+  analyzeMessagesForCompression,
+} from "./lib/context-compression"
+import {
   validateOutput,
   extractStreamingDisplay,
   formatStructuredContent,
@@ -1496,9 +1500,12 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
+      const compressionResult = await compressMessages(config, messagesAfterUser)
+      const messagesForLLM = compressionResult.messages
+
       const rawText = await callLLMStream(
         config,
-        messagesAfterUser,
+        messagesForLLM,
         (chunk) => {
           streamAccumulatedRef.current += chunk
           const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
@@ -1650,10 +1657,13 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
-      const messagesForAI = [...currentRound.messages, internalInstruction]
+      const messagesWithInstruction = [...currentRound.messages, internalInstruction]
+      const compressionResult = await compressMessages(config, messagesWithInstruction)
+      const messagesForLLM = compressionResult.messages
+
       const rawText = await callLLMStream(
         config,
-        messagesForAI,
+        messagesForLLM,
         (chunk) => {
           streamAccumulatedRef.current += chunk
           const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)

@@ -32,6 +32,7 @@ export interface Message {
   visible: boolean
   structuredOutput?: StructuredOutput
   isStreaming?: boolean
+  isSummary?: boolean
 }
 
 export interface ConversationRound {
