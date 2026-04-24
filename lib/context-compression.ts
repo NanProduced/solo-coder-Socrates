@@ -142,7 +142,7 @@ export function createSummaryMessage(
     role: CONTEXT_COMPRESSION_CONFIG.SUMMARY_MESSAGE_ROLE,
     content: `--- 对话历史摘要 ---\n${summaryContent}\n--- 摘要结束 ---`,
     timestamp: earliestTimestamp,
-    visible: true,
+    visible: false,
     isSummary: true,
   }
 }

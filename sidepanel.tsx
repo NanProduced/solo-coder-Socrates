@@ -1458,7 +1458,7 @@ function SidePanel() {
 
     const shouldComplete = isSummaryRequest(textToSend)
     const currentRound = activeRound
-    const messagesAfterUser = [...currentRound.messages, userMessage]
+    let messagesAfterUser = [...currentRound.messages, userMessage]
     const roundAfterUser: ConversationRound = {
       ...currentRound,
       messages: messagesAfterUser,
@@ -1502,6 +1502,9 @@ function SidePanel() {
     try {
       const compressionResult = await compressMessages(config, messagesAfterUser)
       const messagesForLLM = compressionResult.messages
+      if (compressionResult.compressed) {
+        messagesAfterUser = compressionResult.messages
+      }
 
       const rawText = await callLLMStream(
         config,
@@ -1616,7 +1619,13 @@ function SidePanel() {
     }
 
     const currentRound = activeRound
-    const messagesWithUserAction = [...currentRound.messages, userActionMessage]
+
+    const baseCompressionResult = await compressMessages(config, currentRound.messages)
+    const baseMessages = baseCompressionResult.compressed
+      ? baseCompressionResult.messages
+      : currentRound.messages
+
+    let messagesWithUserAction = [...baseMessages, userActionMessage]
     const roundAfterUser: ConversationRound = {
       ...currentRound,
       messages: messagesWithUserAction,
@@ -1657,13 +1666,10 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
-      const messagesWithInstruction = [...currentRound.messages, internalInstruction]
-      const compressionResult = await compressMessages(config, messagesWithInstruction)
-      const messagesForLLM = compressionResult.messages
-
+      const messagesWithInstruction = [...baseMessages, internalInstruction]
       const rawText = await callLLMStream(
         config,
-        messagesForLLM,
+        messagesWithInstruction,
         (chunk) => {
           streamAccumulatedRef.current += chunk
           const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)

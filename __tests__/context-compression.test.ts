@@ -233,7 +233,7 @@ describe("createSummaryMessage", () => {
     const summaryMessage = createSummaryMessage(summaryContent, originalMessages)
 
     expect(summaryMessage.role).toBe(CONTEXT_COMPRESSION_CONFIG.SUMMARY_MESSAGE_ROLE)
-    expect(summaryMessage.visible).toBe(true)
+    expect(summaryMessage.visible).toBe(false)
     expect(summaryMessage.isSummary).toBe(true)
     expect(summaryMessage.content).toContain("--- 对话历史摘要 ---")
     expect(summaryMessage.content).toContain(summaryContent)
