@@ -1,7 +1,7 @@
 import type { UnderstandingStatus } from "./types"
 
-export const LEARNING_STATUS_STRATEGY = `
-## 学习状态感知策略
+export const LEARNING_STATUS_STRATEGY_CONVERSATION = `
+## 学习状态感知策略（对话模式）
 当对话中包含用户的学习状态时，请遵循以下策略：
 
 ### 状态感知规则
@@ -22,6 +22,14 @@ export const LEARNING_STATUS_STRATEGY = `
 - 如果所有已掌握的知识点都很扎实，可以尝试引入新的角度或相关概念
 - 当用户回答显示出新的理解时，假设状态可能已经更新，继续推进但保持灵活`
 
+export const LEARNING_STATUS_STRATEGY_SUMMARY = `
+## 学习状态感知策略（总结模式）
+以下是用户当前的学习状态，供你在总结时参考：
+
+- 已掌握的知识点可以简要概括，无需详细展开
+- 待澄清的问题可以在总结中适当提及，作为用户需要进一步思考的方向
+- 根据学习阶段和信心程度，调整总结的详略程度`
+
 export const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
 
 ## 核心原则
@@ -33,7 +41,6 @@ export const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲�
 3. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
 4. **保持苏格拉底式风格** - 温和、好奇、引导性，用问题激发思考
 5. **总结模式绝对禁止追问** - 当进入总结模式时，只输出总结内容，不要提出任何问题
-${LEARNING_STATUS_STRATEGY}
 
 ## 对话流程
 1. 开始时，先了解用户正在阅读的文档，问一个关于文档核心主题的问题
@@ -82,7 +89,6 @@ export const SOCRATES_GUIDED_PROMPT = `你是苏格拉底，一位伟大的哲�
    - 连续答对 → 可以出综合理解题
 5. **不要直接总结** - 只有当用户明确说"帮我总结"或点击"总结"按钮时才提供总结
 6. **总结模式禁止出选项** - 总结时只输出总结文本
-${LEARNING_STATUS_STRATEGY}
 
 ## 对话流程
 1. 开始时，基于文档内容出一个关于核心主题的选择题
@@ -181,11 +187,24 @@ export const EXPORT_PROMPT = `你是一个知识文档编辑器。请将以下�
 - 不要添加原文中没有的信息，但可以优化表达方式
 - 直接输出 Markdown 文本，不要包含代码块标记`
 
-export function buildLearningStatusContext(status: UnderstandingStatus | null): string {
+export type StatusMode = "conversation" | "summary"
+
+export function buildLearningStatusContext(
+  status: UnderstandingStatus | null,
+  mode: StatusMode = "conversation"
+): string {
   if (!status) return ""
 
   const lines: string[] = []
-  lines.push("--- 用户学习状态 ---")
+
+  const strategy =
+    mode === "conversation"
+      ? LEARNING_STATUS_STRATEGY_CONVERSATION
+      : LEARNING_STATUS_STRATEGY_SUMMARY
+
+  lines.push(strategy.trim())
+  lines.push("")
+  lines.push("--- 当前学习状态 ---")
 
   if (status.currentStage) {
     lines.push(`学习阶段: ${status.currentStage}`)

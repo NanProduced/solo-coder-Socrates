@@ -66,6 +66,7 @@ import {
   DOC_STATUS_PROMPT,
   EXPORT_PROMPT,
   buildLearningStatusContext,
+  type StatusMode,
 } from "./lib/prompts"
 import {
   parseLLMJson,
@@ -1192,6 +1193,38 @@ suggestedPath 使用文档标题。`
     setConfirmClearAll(false)
   }
 
+  const injectLearningStatus = useCallback(
+    (messages: Message[], mode: StatusMode): Message[] => {
+      const learningStatusContext = buildLearningStatusContext(understandingStatus, mode)
+      if (!learningStatusContext) {
+        return messages
+      }
+
+      const statusMessage: Message = {
+        id: generateId(),
+        role: "system",
+        content: learningStatusContext,
+        timestamp: Date.now(),
+        visible: false,
+      }
+
+      const firstUserOrAssistantIndex = messages.findIndex(
+        (m) => m.role === "user" || m.role === "assistant"
+      )
+
+      if (firstUserOrAssistantIndex === -1) {
+        return [...messages, statusMessage]
+      }
+
+      return [
+        ...messages.slice(0, firstUserOrAssistantIndex),
+        statusMessage,
+        ...messages.slice(firstUserOrAssistantIndex),
+      ]
+    },
+    [understandingStatus]
+  )
+
   const startConversation = async (mode: ConversationMode = "free") => {
     if (!hasConfig) {
       chrome.runtime.openOptionsPage()
@@ -1304,18 +1337,10 @@ suggestedPath 使用文档标题。`
 
       streamAccumulatedRef.current = ""
 
-      let messagesForLLM: Message[] = [initialMessage, firstUserMessage]
-      const learningStatusContext = buildLearningStatusContext(understandingStatus)
-      if (learningStatusContext) {
-        const statusMessage: Message = {
-          id: generateId(),
-          role: "system",
-          content: learningStatusContext,
-          timestamp: Date.now(),
-          visible: false,
-        }
-        messagesForLLM = [initialMessage, statusMessage, firstUserMessage]
-      }
+      const messagesForLLM = injectLearningStatus(
+        [initialMessage, firstUserMessage],
+        "conversation"
+      )
 
       try {
         const rawText = await callLLMStream(
@@ -1476,27 +1501,10 @@ suggestedPath 使用文档标题。`
         roundForLLM = compressed
       }
       let messagesForLLM = buildCompressedMessages(roundForLLM)
-
-      const learningStatusContext = buildLearningStatusContext(understandingStatus)
-      if (learningStatusContext) {
-        const statusMessage: Message = {
-          id: generateId(),
-          role: "system",
-          content: learningStatusContext,
-          timestamp: Date.now(),
-          visible: false,
-        }
-        const firstVisibleIndex = messagesForLLM.findIndex((m) => m.visible)
-        if (firstVisibleIndex === -1) {
-          messagesForLLM = [...messagesForLLM, statusMessage]
-        } else {
-          messagesForLLM = [
-            ...messagesForLLM.slice(0, firstVisibleIndex),
-            statusMessage,
-            ...messagesForLLM.slice(firstVisibleIndex),
-          ]
-        }
-      }
+      messagesForLLM = injectLearningStatus(
+        messagesForLLM,
+        shouldComplete ? "summary" : "conversation"
+      )
 
       const rawText = await callLLMStream(
         config,
@@ -1654,27 +1662,7 @@ suggestedPath 使用文档标题。`
     try {
       const roundWithInstruction = { ...currentRound, messages: [...currentRound.messages, internalInstruction] }
       let messagesForAI = buildCompressedMessages(roundWithInstruction)
-
-      const learningStatusContext = buildLearningStatusContext(understandingStatus)
-      if (learningStatusContext) {
-        const statusMessage: Message = {
-          id: generateId(),
-          role: "system",
-          content: learningStatusContext,
-          timestamp: Date.now(),
-          visible: false,
-        }
-        const firstVisibleIndex = messagesForAI.findIndex((m) => m.visible)
-        if (firstVisibleIndex === -1) {
-          messagesForAI = [...messagesForAI, statusMessage]
-        } else {
-          messagesForAI = [
-            ...messagesForAI.slice(0, firstVisibleIndex),
-            statusMessage,
-            ...messagesForAI.slice(firstVisibleIndex),
-          ]
-        }
-      }
+      messagesForAI = injectLearningStatus(messagesForAI, "summary")
 
       const rawText = await callLLMStream(
         config,
