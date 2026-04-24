@@ -1,4 +1,4 @@
-import type { UnderstandingStatus } from "./types"
+import type { UnderstandingStatus, PageNote } from "./types"
 
 export const LEARNING_STATUS_STRATEGY_CONVERSATION = `
 ## 学习状态感知策略（对话模式）
@@ -230,6 +230,72 @@ export function buildLearningStatusContext(
     lines.push(`下一步思考: ${status.nextThinkingDirection}`)
   }
 
+  lines.push("------------------")
+  return lines.join("\n")
+}
+
+export const PAGE_NOTES_STRATEGY_CONVERSATION = `
+## 网页批注感知策略（对话模式）
+当对话中包含用户的网页批注时，请遵循以下策略：
+
+### 批注感知规则
+1. **优先围绕批注提问** - 如果用户有批注，优先考虑围绕批注中的文本内容设计问题
+2. **判断提问价值** - 只有当批注内容确实值得深入探讨时才围绕它提问，不要硬提
+   - 如果批注内容是基础定义，且用户已经理解，可以跳过
+   - 如果批注内容涉及复杂概念或争议点，优先围绕它提问
+   - 如果用户添加了备注，优先关注备注中提及的问题或思考
+3. **保持灵活性** - 不要强制每个问题都必须围绕批注，根据对话流自然推进
+
+### 问题设计原则
+- 如果批注中有用户的备注，优先围绕备注中的问题或思考来提问
+- 如果批注只是选中文本，判断该文本是否值得深入探讨
+- 如果批注内容与当前对话主题相关，自然地将其融入问题
+- 不要生硬地说"你批注了XXX"，而是自然地围绕内容提问`
+
+export const PAGE_NOTES_STRATEGY_SUMMARY = `
+## 网页批注感知策略（总结模式）
+当对话中包含用户的网页批注时，请遵循以下策略：
+
+### 总结时的批注处理
+1. **纳入批注内容** - 在总结中适当提及用户批注的关键内容
+2. **不要追问** - 总结模式下只输出总结文本，不要提出任何问题
+3. **整合自然** - 将批注内容自然地融入整体总结，不要显得突兀
+
+### 总结原则
+- 如果批注中有用户的重要思考或问题，可以在总结中作为"待进一步思考的问题"提及
+- 如果批注涉及关键概念，可以在总结中突出这些概念
+- 保持总结的连贯性，批注内容应服务于整体总结的逻辑`
+
+export type NotesMode = "conversation" | "summary"
+
+export function buildPageNotesContext(
+  notes: PageNote[],
+  mode: NotesMode = "conversation"
+): string {
+  if (!notes || notes.length === 0) return ""
+
+  const lines: string[] = []
+
+  const strategy =
+    mode === "conversation"
+      ? PAGE_NOTES_STRATEGY_CONVERSATION
+      : PAGE_NOTES_STRATEGY_SUMMARY
+
+  lines.push(strategy.trim())
+  lines.push("")
+  lines.push("--- 用户网页批注（最近" + notes.length + "条） ---")
+
+  notes.forEach((note, index) => {
+    lines.push("")
+    lines.push(`[批注 ${index + 1}]`)
+    lines.push(`选中文本: "${note.selectedText}"`)
+    if (note.note && note.note.trim()) {
+      lines.push(`用户备注: "${note.note}"`)
+    }
+    lines.push(`创建时间: ${new Date(note.createdAt).toLocaleString()}`)
+  })
+
+  lines.push("")
   lines.push("------------------")
   return lines.join("\n")
 }
