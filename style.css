@@ -46,4 +46,14 @@
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: #c4c3c0;
   }
+
+  @keyframes fadeInUp {
+    0%, 100% { opacity: 0.3; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-2px); }
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
 }

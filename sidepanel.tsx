@@ -132,7 +132,7 @@ const STATUS_UPDATE_PROMPT = `你是一个学习状态分析器。根据以下�
   "currentStage": "当前学习阶段，使用以下之一：初步接触 | 建立框架 | 深入理解 | 融会贯通",
   "mastered": ["已掌握的知识点1", "已掌握的知识点2"],
   "pendingClarification": ["待澄清的问题1", "待澄清的问题2"],
-  "evidenceStatus": "对已掌握内容的信心程度：薄弱推断 | 部分验证 | 充分支持",
+  "evidenceStatus": "对已掌握内容的理解信心：低 | 中 | 高",
   "nextThinkingDirection": "建议用户下一步思考的方向"
 }
 
@@ -140,7 +140,7 @@ const STATUS_UPDATE_PROMPT = `你是一个学习状态分析器。根据以下�
 - currentStage 必须从四个阶段中选择最匹配的
 - mastered 列出用户已展现出理解的知识点
 - pendingClarification 列出对话中暴露出的理解盲区
-- evidenceStatus 基于用户回答的深度和准确性判断
+- evidenceStatus 基于用户回答的深度和准确性判断信心等级
 - nextThinkingDirection 给出具体的、可操作的思考方向`
 
 const SUMMARY_PROMPT = `你是一个知识文档生成器。请为以下文档内容生成一份精炼的摘要。
@@ -181,7 +181,7 @@ const DOC_STATUS_PROMPT = `你是一个学习状态分析器。根据以下完�
   "currentStage": "当前学习阶段：初步接触 | 建立框架 | 深入理解 | 融会贯通",
   "mastered": ["已掌握的知识点"],
   "pendingClarification": ["待澄清的问题"],
-  "evidenceStatus": "证据状态描述（需比自动更新更详细，50-100字）",
+  "evidenceStatus": "理解信心描述（需比自动更新更详细，50-100字）",
   "nextThinkingDirection": "下一步思考方向（需比自动更新更具体，50-100字）"
 }
 
@@ -269,7 +269,7 @@ const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean
     html = html.replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
 
     html = html.replace(/^&gt;\s+(.+)$/gm, (match, text) => {
-      return `<blockquote class="border-l-4 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
+      return `<blockquote class="border-l-2 pl-3 py-1 my-2 ${isUser ? 'border-white/50' : 'border-gray-300 text-gray-600'}">${text}</blockquote>`
     })
 
     html = html.replace(/\n\n/g, '</p><p class="mb-2 last:mb-0">')
@@ -281,13 +281,13 @@ const MarkdownMessage = ({ content, isUser }: { content: string; isUser: boolean
 
     html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
       const code = inlineCodes[parseInt(index)]
-      const bgClass = isUser ? 'bg-white/20' : 'bg-gray-100 text-gray-800'
+      const bgClass = isUser ? 'bg-white/20' : 'bg-notion-bg-secondary text-notion-text'
       return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
     })
 
     html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
       const code = codeBlocks[parseInt(index)]
-      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-gray-50 text-gray-800 text-xs font-mono overflow-x-auto">${code}</code></pre>`
+      return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-notion-bg-secondary text-notion-text text-xs font-mono overflow-x-auto">${code}</code></pre>`
     })
 
     return html
@@ -857,7 +857,7 @@ function SidePanel() {
         currentStage: parsed.currentStage || "初步接触",
         mastered: Array.isArray(parsed.mastered) ? parsed.mastered : [],
         pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : [],
-        evidenceStatus: parsed.evidenceStatus || "薄弱推断",
+        evidenceStatus: parsed.evidenceStatus || "低",
         nextThinkingDirection: parsed.nextThinkingDirection || "",
         updatedAt: Date.now(),
       }
@@ -924,7 +924,7 @@ function SidePanel() {
         currentStage: "初步接触",
         mastered: [],
         pendingClarification: [],
-        evidenceStatus: "薄弱推断",
+        evidenceStatus: "低",
         nextThinkingDirection: "",
         updatedAt: Date.now(),
       }
@@ -935,7 +935,7 @@ function SidePanel() {
             currentStage: parsed.currentStage || "初步接触",
             mastered: Array.isArray(parsed.mastered) ? parsed.mastered : [],
             pendingClarification: Array.isArray(parsed.pendingClarification) ? parsed.pendingClarification : [],
-            evidenceStatus: parsed.evidenceStatus || "薄弱推断",
+            evidenceStatus: parsed.evidenceStatus || "低",
             nextThinkingDirection: parsed.nextThinkingDirection || "",
             updatedAt: Date.now(),
           }
@@ -1792,7 +1792,7 @@ function SidePanel() {
   return (
     <div className="flex flex-col h-full bg-notion-bg text-notion-text transition-colors duration-300">
       {contextInvalidated && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-notion-bg/95 backdrop-blur-sm">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-notion-bg">
           <div className="text-center px-8 max-w-xs">
             <div className="w-12 h-12 mx-auto mb-4 bg-amber-100 rounded-xl flex items-center justify-center">
               <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1832,44 +1832,44 @@ function SidePanel() {
             <button
               onClick={handleKnowledgeButtonClick}
               disabled={isGeneratingDoc || streamState.isStreaming}
-              className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${showKnowledgePanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
-              title="知识文档"
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-30 ${showKnowledgePanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
               </svg>
+              <span>知识</span>
             </button>
           )}
           {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
             <button
               onClick={handleSummarize}
               disabled={streamState.isStreaming}
-              className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors disabled:opacity-30"
-              title="总结当前对话"
+              className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors disabled:opacity-30"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
               </svg>
+              <span>总结</span>
             </button>
           )}
           <button
             onClick={openHistoryPanel}
-            className="p-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors"
-            title="历史对话"
+            className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
+            <span>历史</span>
           </button>
           {conversationStarted && !isViewingHistory && (
             <button
               onClick={handleNewConversation}
-              className="p-1.5 text-notion-text-secondary hover:bg-red-500/10 hover:text-red-500 rounded-lg transition-colors"
-              title="开启新对话"
+              className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
+              <span>新对话</span>
             </button>
           )}
         </div>
@@ -1877,7 +1877,7 @@ function SidePanel() {
 
       {showKnowledgePanel ? (
         <div className="flex flex-col h-full">
-          <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
+          <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border">
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -2005,45 +2005,24 @@ function SidePanel() {
 
                 <div>
                   <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">理解状态</h3>
-                  <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-3">
+                  <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-notion-text-secondary">当前阶段</span>
                       <span className="text-xs font-semibold text-notion-accent px-2 py-0.5 bg-notion-accent/10 rounded-full">
                         {knowledgeDoc.understandingStatus.currentStage}
                       </span>
+                      {knowledgeDoc.understandingStatus.mastered.length > 0 && (
+                        <span className="text-xs text-green-600 dark:text-green-400">✓ {knowledgeDoc.understandingStatus.mastered.length} 已掌握</span>
+                      )}
+                      {knowledgeDoc.understandingStatus.pendingClarification.length > 0 && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">⚠ {knowledgeDoc.understandingStatus.pendingClarification.length} 待澄清</span>
+                      )}
                     </div>
-                    {knowledgeDoc.understandingStatus.mastered.length > 0 && (
-                      <div>
-                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {knowledgeDoc.understandingStatus.mastered.map((item, idx) => (
-                            <span key={idx} className="text-[11px] px-2 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {knowledgeDoc.understandingStatus.pendingClarification.length > 0 && (
-                      <div>
-                        <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {knowledgeDoc.understandingStatus.pendingClarification.map((item, idx) => (
-                            <span key={idx} className="text-[11px] px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-xs text-notion-text-secondary font-medium">证据状态</span>
-                      <p className="text-xs text-notion-text mt-0.5">{knowledgeDoc.understandingStatus.evidenceStatus}</p>
+                    <div className="text-xs text-notion-text-secondary">
+                      理解信心: {knowledgeDoc.understandingStatus.evidenceStatus}
                     </div>
                     {knowledgeDoc.understandingStatus.nextThinkingDirection && (
-                      <div>
-                        <span className="text-xs text-notion-text-secondary font-medium">💡 下一步思考</span>
-                        <p className="text-xs text-notion-text mt-0.5">{knowledgeDoc.understandingStatus.nextThinkingDirection}</p>
+                      <div className="text-xs text-notion-text-secondary">
+                        💡 {knowledgeDoc.understandingStatus.nextThinkingDirection}
                       </div>
                     )}
                   </div>
@@ -2068,7 +2047,7 @@ function SidePanel() {
         </div>
       ) : showHistoryPanel ? (
         <div className="flex flex-col h-full">
-          <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
+          <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border">
             <div className="px-4 py-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold">历史对话</h2>
@@ -2316,9 +2295,9 @@ function SidePanel() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                   </svg>
                 </div>
-                <h2 className="text-xl font-bold tracking-tight mb-3">不审视的人生不值得过</h2>
+                <h2 className="text-xl font-bold tracking-tight mb-3">苏格拉底</h2>
                 <p className="text-sm text-notion-text-secondary leading-relaxed mb-10 opacity-80">
-                  导师苏格拉底已准备好引导你深入理解此文档。他不会直接给你答案，但会启发你的智慧。
+                  通过提问引导你深入理解文档，在思辨中获得真正的洞见。
                 </p>
 
                 <div className="flex gap-3 w-full max-w-xs">
@@ -2327,12 +2306,12 @@ function SidePanel() {
                     disabled={streamState.isStreaming || isLoading}
                     className="flex-1 group relative px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50"
                   >
-                    <div className="flex flex-col items-center gap-1">
+                    <div className="flex flex-col items-center gap-0.5">
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                       </svg>
-                      <span className="text-xs">思辨模式</span>
-                      <span className="text-[10px] opacity-70">自由输入</span>
+                      <span className="text-xs font-bold">思辨模式</span>
+                      <span className="text-[10px] opacity-70 leading-tight">自由回答<br/>深度探讨</span>
                     </div>
                   </button>
                   <button
@@ -2340,12 +2319,12 @@ function SidePanel() {
                     disabled={streamState.isStreaming || isLoading}
                     className="flex-1 group relative px-4 py-3 bg-notion-bg-secondary text-notion-text border border-notion-border rounded-xl font-bold shadow-sm hover:bg-notion-hover transition-all active:scale-95 disabled:opacity-50"
                   >
-                    <div className="flex flex-col items-center gap-1">
+                    <div className="flex flex-col items-center gap-0.5">
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                       </svg>
-                      <span className="text-xs">引导模式</span>
-                      <span className="text-[10px] opacity-70">选择题</span>
+                      <span className="text-xs font-bold">引导模式</span>
+                      <span className="text-[10px] opacity-60 leading-tight">选择题<br/>循序渐进</span>
                     </div>
                   </button>
                 </div>
@@ -2449,7 +2428,7 @@ function SidePanel() {
                           isUser={message.role === "user"}
                         />
                         {message.isStreaming && (
-                          <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-pulse align-text-bottom" />
+                          <span className="inline-block w-1.5 h-4 bg-notion-accent/70 ml-0.5 animate-[blink_1s_ease-in-out_infinite] align-text-bottom" />
                         )}
                         {!message.isStreaming && message.structuredOutput?.options && message.structuredOutput.options.length >= 2 && !isRoundCompleted && (
                           <div className="mt-3 flex flex-col gap-1.5">
@@ -2481,8 +2460,8 @@ function SidePanel() {
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-notion-bg-secondary border border-notion-border flex-shrink-0 flex items-center justify-center">
                       <div className="flex gap-1">
-                        <div className="w-1 h-1 bg-notion-accent rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <div className="w-1 h-1 bg-notion-accent rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <div className="w-1 h-1 bg-notion-accent rounded-full animate-[fadeInUp_0.6s_ease-out_infinite]" style={{ animationDelay: "0ms" }} />
+                        <div className="w-1 h-1 bg-notion-accent rounded-full animate-[fadeInUp_0.6s_ease-out_infinite]" style={{ animationDelay: "150ms" }} />
                       </div>
                     </div>
                   </div>
@@ -2515,7 +2494,7 @@ function SidePanel() {
           </div>
 
           {conversationStarted && !isRoundCompleted && !isViewingHistory && (
-            <div className="border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="border-t border-notion-border bg-notion-bg">
               {understandingStatus && !showKnowledgePanel && (
                 <div className="px-4 pt-3">
                   <button
@@ -2524,10 +2503,8 @@ function SidePanel() {
                   >
                     <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
                       <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
-                      <span className="text-notion-border">|</span>
-                      <span className="text-green-600 dark:text-green-400">✓ {understandingStatus.mastered.length}已掌握</span>
-                      <span className="text-notion-border">|</span>
-                      <span className="text-amber-600 dark:text-amber-400">⚠ {understandingStatus.pendingClarification.length}待澄清</span>
+                      <span className="text-green-600 dark:text-green-400">✓{understandingStatus.mastered.length}</span>
+                      <span className="text-amber-600 dark:text-amber-400">⚠{understandingStatus.pendingClarification.length}</span>
                       {isUpdatingStatus && (
                         <svg className="w-3 h-3 animate-spin text-notion-accent" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -2541,10 +2518,10 @@ function SidePanel() {
                   </button>
                   <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                     <div className="overflow-hidden">
-                      <div className="pt-2 pb-1 space-y-2">
+                      <div className="pt-2 pb-1 space-y-1.5">
                         {understandingStatus.mastered.length > 0 && (
                           <div>
-                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">已掌握</span>
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {understandingStatus.mastered.map((item, idx) => (
                                 <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
@@ -2554,7 +2531,7 @@ function SidePanel() {
                         )}
                         {understandingStatus.pendingClarification.length > 0 && (
                           <div>
-                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">待澄清</span>
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {understandingStatus.pendingClarification.map((item, idx) => (
                                 <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
@@ -2563,11 +2540,11 @@ function SidePanel() {
                           </div>
                         )}
                         <div className="text-[11px] text-notion-text-secondary">
-                          <span className="font-medium">证据状态</span>: {understandingStatus.evidenceStatus}
+                          理解信心: {understandingStatus.evidenceStatus}
                         </div>
                         {understandingStatus.nextThinkingDirection && (
                           <div className="text-[11px] text-notion-text-secondary">
-                            <span className="font-medium">💡 下一步</span>: {understandingStatus.nextThinkingDirection}
+                            💡 {understandingStatus.nextThinkingDirection}
                           </div>
                         )}
                       </div>
@@ -2624,7 +2601,7 @@ function SidePanel() {
           )}
 
           {conversationStarted && isRoundCompleted && !isViewingHistory && (
-            <div className="border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="border-t border-notion-border bg-notion-bg">
               {understandingStatus && !showKnowledgePanel && (
                 <div className="px-4 pt-3">
                   <button
@@ -2633,10 +2610,8 @@ function SidePanel() {
                   >
                     <div className="flex items-center gap-2 text-xs text-notion-text-secondary">
                       <span className="font-medium text-notion-accent">{understandingStatus.currentStage}</span>
-                      <span className="text-notion-border">|</span>
-                      <span className="text-green-600 dark:text-green-400">✓ {understandingStatus.mastered.length}已掌握</span>
-                      <span className="text-notion-border">|</span>
-                      <span className="text-amber-600 dark:text-amber-400">⚠ {understandingStatus.pendingClarification.length}待澄清</span>
+                      <span className="text-green-600 dark:text-green-400">✓{understandingStatus.mastered.length}</span>
+                      <span className="text-amber-600 dark:text-amber-400">⚠{understandingStatus.pendingClarification.length}</span>
                       <svg className={`w-3 h-3 ml-auto transition-transform ${showStatusDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
@@ -2644,10 +2619,10 @@ function SidePanel() {
                   </button>
                   <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showStatusDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                     <div className="overflow-hidden">
-                      <div className="pt-2 pb-1 space-y-2">
+                      <div className="pt-2 pb-1 space-y-1.5">
                         {understandingStatus.mastered.length > 0 && (
                           <div>
-                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                            <span className="text-[11px] text-green-600 dark:text-green-400 font-medium">已掌握</span>
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {understandingStatus.mastered.map((item, idx) => (
                                 <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">{item}</span>
@@ -2657,7 +2632,7 @@ function SidePanel() {
                         )}
                         {understandingStatus.pendingClarification.length > 0 && (
                           <div>
-                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">待澄清</span>
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {understandingStatus.pendingClarification.map((item, idx) => (
                                 <span key={idx} className="text-[10px] px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">{item}</span>
@@ -2666,11 +2641,11 @@ function SidePanel() {
                           </div>
                         )}
                         <div className="text-[11px] text-notion-text-secondary">
-                          <span className="font-medium">证据状态</span>: {understandingStatus.evidenceStatus}
+                          理解信心: {understandingStatus.evidenceStatus}
                         </div>
                         {understandingStatus.nextThinkingDirection && (
                           <div className="text-[11px] text-notion-text-secondary">
-                            <span className="font-medium">💡 下一步</span>: {understandingStatus.nextThinkingDirection}
+                            💡 {understandingStatus.nextThinkingDirection}
                           </div>
                         )}
                       </div>
@@ -2690,7 +2665,7 @@ function SidePanel() {
           )}
 
           {isViewingHistory && !isRoundCompleted && viewingRound && (
-            <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="p-4 border-t border-notion-border bg-notion-bg">
               <button
                 onClick={() => handleContinueRound(viewingRound.id)}
                 className="w-full px-4 py-3 bg-notion-accent text-white rounded-xl font-bold shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95"
@@ -2701,7 +2676,7 @@ function SidePanel() {
           )}
 
           {isViewingHistory && isRoundCompleted && (
-            <div className="p-4 border-t border-notion-border bg-notion-bg/95 backdrop-blur-sm">
+            <div className="p-4 border-t border-notion-border bg-notion-bg">
               <div className="flex items-center justify-center gap-2 py-2">
                 <svg className="w-4 h-4 text-notion-text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

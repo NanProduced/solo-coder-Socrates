@@ -118,7 +118,7 @@ function OptionsPage() {
                 <input
                   type="text"
                   value={model}
-                  onChange={(e) => { setModel(e.target.value); setModel(e.target.value); setValidationError(null) }}
+                  onChange={(e) => { setModel(e.target.value); setValidationError(null) }}
                   placeholder="gpt-4o"
                   className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30"
                 />
