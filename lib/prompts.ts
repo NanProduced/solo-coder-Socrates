@@ -268,6 +268,27 @@ export const PAGE_NOTES_STRATEGY_SUMMARY = `
 
 export type NotesMode = "conversation" | "summary"
 
+function truncateText(text: string, maxLength: number, label: string): string {
+  if (!text || text.length <= maxLength) {
+    return text
+  }
+  const truncated = text.slice(0, maxLength)
+  const lastPeriodIndex = truncated.lastIndexOf("。")
+  const lastCommaIndex = truncated.lastIndexOf("，")
+  const lastSpaceIndex = truncated.lastIndexOf(" ")
+  
+  let cutIndex = maxLength
+  if (lastPeriodIndex > maxLength * 0.8) {
+    cutIndex = lastPeriodIndex + 1
+  } else if (lastCommaIndex > maxLength * 0.8) {
+    cutIndex = lastCommaIndex + 1
+  } else if (lastSpaceIndex > maxLength * 0.8) {
+    cutIndex = lastSpaceIndex + 1
+  }
+  
+  return text.slice(0, cutIndex).trim() + `... [${label}已截断，原长${text.length}字]`
+}
+
 export function buildPageNotesContext(
   notes: PageNote[],
   mode: NotesMode = "conversation"
@@ -288,9 +309,13 @@ export function buildPageNotesContext(
   notes.forEach((note, index) => {
     lines.push("")
     lines.push(`[批注 ${index + 1}]`)
-    lines.push(`选中文本: "${note.selectedText}"`)
+    
+    const truncatedSelectedText = truncateText(note.selectedText, 1000, "选中文本")
+    lines.push(`选中文本: "${truncatedSelectedText}"`)
+    
     if (note.note && note.note.trim()) {
-      lines.push(`用户备注: "${note.note}"`)
+      const truncatedNote = truncateText(note.note.trim(), 400, "备注")
+      lines.push(`用户备注: "${truncatedNote}"`)
     }
     lines.push(`创建时间: ${new Date(note.createdAt).toLocaleString()}`)
   })

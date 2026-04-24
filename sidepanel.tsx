@@ -1131,6 +1131,12 @@ suggestedPath 使用文档标题。`
         setCrossDocAnalysis(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
+        setPageNotes([])
+        setShowNotesPanel(false)
+        setNewNoteText("")
+        setNewNoteSelectedText("")
+        setIsSavingNote(false)
+        setDeletingNoteId(null)
         return
       }
 
@@ -1160,6 +1166,12 @@ suggestedPath 使用文档标题。`
         setCrossDocAnalysis(null)
         setShowStatusDetail(false)
         setShowCompressedDetail(false)
+        setPageNotes([])
+        setShowNotesPanel(false)
+        setNewNoteText("")
+        setNewNoteSelectedText("")
+        setIsSavingNote(false)
+        setDeletingNoteId(null)
         return
       }
 
