@@ -47,6 +47,11 @@ export const KnowledgePanel = ({
   const [addingNoteFor, setAddingNoteFor] = useState<string | undefined>(undefined)
   const [editingNote, setEditingNote] = useState<Note | null>(null)
   const [showGeneralNoteInput, setShowGeneralNoteInput] = useState(false)
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({ summary: true })
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   const notesForConcept = (conceptName: string) =>
     notes.filter((n) => n.conceptName === conceptName)
@@ -144,39 +149,63 @@ export const KnowledgePanel = ({
             </div>
           </div>
         ) : knowledgeDoc ? (
-          <div className="p-5 space-y-6">
-            <div>
-              <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">摘要</h3>
-              <p className="text-sm text-notion-text leading-relaxed">{knowledgeDoc.summary}</p>
+          <div className="p-4 space-y-1">
+            <button onClick={() => toggleSection("summary")} className="w-full flex items-center gap-2 py-1.5">
+              <svg className={`w-3 h-3 text-notion-text-secondary transition-transform ${expandedSections.summary ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">摘要</h3>
+            </button>
+            <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expandedSections.summary ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+              <div className="overflow-hidden">
+                <p className="text-sm text-notion-text leading-relaxed pl-5">{knowledgeDoc.summary}</p>
+              </div>
             </div>
 
             {knowledgeDoc.keyConcepts.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">关键概念</h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {knowledgeDoc.keyConcepts.map((concept, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center px-2.5 py-1 bg-notion-accent/10 text-notion-accent rounded-full text-xs font-medium"
-                    >
-                      {concept.name}
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-3 space-y-2">
-                  {knowledgeDoc.keyConcepts.map((concept, idx) => (
-                    <div key={idx} className="text-xs text-notion-text-secondary">
-                      <span className="font-medium text-notion-text">{concept.name}</span>: {concept.description}
+                <button onClick={() => toggleSection("concepts")} className="w-full flex items-center gap-2 py-1.5">
+                  <svg className={`w-3 h-3 text-notion-text-secondary transition-transform ${expandedSections.concepts ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">关键概念</h3>
+                  <span className="text-[11px] text-notion-text-secondary ml-1">({knowledgeDoc.keyConcepts.length})</span>
+                </button>
+                <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expandedSections.concepts ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                    <div className="pl-5 space-y-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {knowledgeDoc.keyConcepts.map((concept, idx) => (
+                          <span key={idx} className="inline-flex items-center px-2.5 py-1 bg-notion-accent/10 text-notion-accent rounded-full text-xs font-medium">
+                            {concept.name}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="space-y-1.5">
+                        {knowledgeDoc.keyConcepts.map((concept, idx) => (
+                          <div key={idx} className="text-xs text-notion-text-secondary">
+                            <span className="font-medium text-notion-text">{concept.name}</span>: {concept.description}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
             )}
 
             {knowledgeDoc.knowledgeCards.length > 0 && (
               <div>
-                <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">知识卡片</h3>
-                <div className="space-y-3">
+                <button onClick={() => toggleSection("cards")} className="w-full flex items-center gap-2 py-1.5">
+                  <svg className={`w-3 h-3 text-notion-text-secondary transition-transform ${expandedSections.cards ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">知识卡片</h3>
+                  <span className="text-[11px] text-notion-text-secondary ml-1">({knowledgeDoc.knowledgeCards.length})</span>
+                </button>
+                <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expandedSections.cards ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                    <div className="pl-5 space-y-3">
                   {knowledgeDoc.knowledgeCards.map((card, idx) => {
                     const cardNotes = notesForConcept(card.concept)
                     const isAdding = addingNoteFor === card.concept
@@ -197,12 +226,13 @@ export const KnowledgePanel = ({
                                 setAddingNoteFor(isAdding ? undefined : card.concept)
                                 setEditingNote(null)
                               }}
-                              className="ml-auto text-notion-text-secondary hover:text-notion-accent transition-colors"
-                              title="添加笔记"
+                              className={`ml-auto text-[11px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                                isAdding
+                                  ? "text-notion-accent bg-notion-accent/10"
+                                  : "text-notion-text-secondary hover:text-notion-accent hover:bg-notion-accent/5"
+                              }`}
                             >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
+                              {isAdding ? "收起" : "+ 笔记"}
                             </button>
                           )}
                         </div>
@@ -248,13 +278,23 @@ export const KnowledgePanel = ({
                       </div>
                     )
                   })}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
             <div>
-              <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">理解状态</h3>
-              <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-3">
+              <button onClick={() => toggleSection("status")} className="w-full flex items-center gap-2 py-1.5">
+                <svg className={`w-3 h-3 text-notion-text-secondary transition-transform ${expandedSections.status ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+                <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">理解状态</h3>
+                <span className="text-[11px] text-notion-accent ml-1 font-medium">{knowledgeDoc.understandingStatus.currentStage}</span>
+              </button>
+              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expandedSections.status ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                <div className="overflow-hidden">
+                  <div className="pl-5 p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30 space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-notion-text-secondary">当前阶段</span>
                   <span className="text-xs font-semibold text-notion-accent px-2 py-0.5 bg-notion-accent/10 rounded-full">
@@ -263,7 +303,7 @@ export const KnowledgePanel = ({
                 </div>
                 {knowledgeDoc.understandingStatus.mastered.length > 0 && (
                   <div>
-                    <span className="text-xs text-green-600 dark:text-green-400 font-medium">✓ 已掌握</span>
+                    <span className="text-xs text-green-600 dark:text-green-400 font-medium">已掌握</span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {knowledgeDoc.understandingStatus.mastered.map((item, idx) => (
                         <span key={idx} className="text-[11px] px-2 py-0.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-full">
@@ -275,7 +315,7 @@ export const KnowledgePanel = ({
                 )}
                 {knowledgeDoc.understandingStatus.pendingClarification.length > 0 && (
                   <div>
-                    <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">⚠ 待澄清</span>
+                    <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">待澄清</span>
                     <div className="flex flex-wrap gap-1 mt-1">
                       {knowledgeDoc.understandingStatus.pendingClarification.map((item, idx) => (
                         <span key={idx} className="text-[11px] px-2 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded-full">
@@ -291,62 +331,73 @@ export const KnowledgePanel = ({
                 </div>
                 {knowledgeDoc.understandingStatus.nextThinkingDirection && (
                   <div>
-                    <span className="text-xs text-notion-text-secondary font-medium">💡 下一步思考</span>
+                    <span className="text-xs text-notion-text-secondary font-medium">下一步思考</span>
                     <p className="text-xs text-notion-text mt-0.5">{knowledgeDoc.understandingStatus.nextThinkingDirection}</p>
                   </div>
                 )}
+                  </div>
+                </div>
               </div>
             </div>
 
             {onAddNote && (
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">
-                    📝 笔记
-                  </h3>
+                <button onClick={() => toggleSection("notes")} className="w-full flex items-center gap-2 py-1.5">
+                  <svg className={`w-3 h-3 text-notion-text-secondary transition-transform ${expandedSections.notes ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">笔记</h3>
+                  {generalNotes.length > 0 && <span className="text-[11px] text-notion-text-secondary ml-1">({generalNotes.length})</span>}
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation()
                       setShowGeneralNoteInput(!showGeneralNoteInput)
                       setAddingNoteFor(undefined)
                       setEditingNote(null)
                     }}
-                    className="text-[11px] text-notion-accent hover:text-notion-accent-hover font-medium transition-colors"
+                    className="ml-auto text-[11px] text-notion-accent hover:text-notion-accent-hover font-medium transition-colors"
                   >
                     + 添加笔记
                   </button>
-                </div>
-                {generalNotes.length > 0 && (
-                  <div className="space-y-2 mb-2">
-                    {generalNotes.map((note) =>
-                      editingNote?.id === note.id ? (
+                </button>
+                <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${expandedSections.notes ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                  <div className="overflow-hidden">
+                    <div className="pl-5 space-y-2">
+                      {generalNotes.length > 0 && (
+                        <div className="space-y-2 mb-2">
+                          {generalNotes.map((note) =>
+                            editingNote?.id === note.id ? (
+                              <NoteInput
+                                key={note.id}
+                                existingNote={editingNote}
+                                onSave={handleSaveEditNote}
+                                onCancel={() => setEditingNote(null)}
+                              />
+                            ) : (
+                              <NoteItem
+                                key={note.id}
+                                note={note}
+                                onEdit={setEditingNote}
+                                onDelete={(id) => onDeleteNote?.(id)}
+                              />
+                            )
+                          )}
+                        </div>
+                      )}
+                      {showGeneralNoteInput && (
                         <NoteInput
-                          key={note.id}
-                          existingNote={editingNote}
-                          onSave={handleSaveEditNote}
-                          onCancel={() => setEditingNote(null)}
+                          onSave={(content) => handleSaveNewNote(undefined, content)}
+                          onCancel={() => setShowGeneralNoteInput(false)}
                         />
-                      ) : (
-                        <NoteItem
-                          key={note.id}
-                          note={note}
-                          onEdit={setEditingNote}
-                          onDelete={(id) => onDeleteNote?.(id)}
-                        />
-                      )
-                    )}
+                      )}
+                      {generalNotes.length === 0 && !showGeneralNoteInput && (
+                        <p className="text-xs text-notion-text-secondary opacity-50">
+                          在知识卡片上点击"+ 笔记"可为特定概念添加笔记
+                        </p>
+                      )}
+                    </div>
                   </div>
-                )}
-                {showGeneralNoteInput && (
-                  <NoteInput
-                    onSave={(content) => handleSaveNewNote(undefined, content)}
-                    onCancel={() => setShowGeneralNoteInput(false)}
-                  />
-                )}
-                {generalNotes.length === 0 && !showGeneralNoteInput && (
-                  <p className="text-xs text-notion-text-secondary opacity-50 pl-1">
-                    在知识卡片上点击 ✏️ 可为特定概念添加笔记
-                  </p>
-                )}
+                </div>
               </div>
             )}
 

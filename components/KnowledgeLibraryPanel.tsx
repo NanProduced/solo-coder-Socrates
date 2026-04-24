@@ -167,7 +167,7 @@ export const KnowledgeLibraryPanel = ({
       <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
         <div className="px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold">📚 知识库</h2>
+            <h2 className="text-sm font-bold">知识库</h2>
             {!editMode && allDocs.length > 0 && (
               <span className="text-[10px] text-notion-text-secondary">
                 {allDocs.length} 文档 · {totalConcepts} 概念 · {totalCards} 卡片
@@ -255,10 +255,10 @@ export const KnowledgeLibraryPanel = ({
                 className="text-[11px] px-2 py-1 bg-notion-bg-secondary rounded-lg border border-notion-border/50 focus:outline-none focus:border-notion-accent/50 text-notion-text-secondary transition-colors"
               >
                 <option value="all">全部阶段</option>
-                <option value="初步接触">🔴 初步接触</option>
-                <option value="建立框架">🟠 建立框架</option>
-                <option value="深入理解">🟡 深入理解</option>
-                <option value="融会贯通">🟢 融会贯通</option>
+                <option value="初步接触">初步接触</option>
+                <option value="建立框架">建立框架</option>
+                <option value="深入理解">深入理解</option>
+                <option value="融会贯通">融会贯通</option>
               </select>
               {allDocs.length >= 2 && (
                 <div className="flex items-center gap-0.5 ml-auto">
@@ -482,7 +482,7 @@ export const KnowledgeLibraryPanel = ({
                                 <span className="text-xs font-medium truncate">
                                   {doc.pageTitle || "未命名文档"}
                                 </span>
-                                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${stageCfg.bg} ${stageCfg.color}`}>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${stageCfg.bg} ${stageCfg.color}`}>
                                   {stage}
                                 </span>
                               </div>
@@ -520,21 +520,24 @@ export const KnowledgeLibraryPanel = ({
       {!editMode && allDocs.length > 0 && (
         <div className="border-t border-notion-border bg-notion-bg px-4 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {dueReviewCount > 0 && (
-              <button
-                onClick={onStartReview}
-                className="text-[11px] font-medium px-3 py-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg hover:bg-amber-500/20 transition-colors"
-              >
-                📝 复习 ({dueReviewCount})
-              </button>
-            )}
+            <button
+              onClick={onStartReview}
+              disabled={dueReviewCount === 0}
+              className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 ${
+                dueReviewCount > 0
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20"
+                  : "bg-notion-bg-secondary text-notion-text-secondary"
+              }`}
+            >
+              复习 {dueReviewCount > 0 ? `(${dueReviewCount} 待复习)` : "(无待复习)"}
+            </button>
             {allDocs.length >= 2 && (
               <button
                 onClick={onAnalyzeRelations}
                 disabled={isAnalyzing}
                 className="text-[11px] font-medium px-3 py-1.5 bg-notion-accent/10 text-notion-accent rounded-lg hover:bg-notion-accent/20 transition-colors disabled:opacity-50"
               >
-                {isAnalyzing ? "分析中..." : "📊 分析关联"}
+                {isAnalyzing ? "分析中..." : "分析关联"}
               </button>
             )}
           </div>
@@ -543,7 +546,7 @@ export const KnowledgeLibraryPanel = ({
             disabled={isExporting}
             className="text-[11px] font-medium px-3 py-1.5 bg-notion-bg-secondary text-notion-text-secondary rounded-lg hover:bg-notion-hover transition-colors disabled:opacity-50"
           >
-            {isExporting ? "导出中..." : "📥 导出全部"}
+            {isExporting ? "导出中..." : "导出全部"}
           </button>
         </div>
       )}

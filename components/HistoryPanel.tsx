@@ -211,11 +211,11 @@ export const HistoryPanel = ({
                                 {round.pageTitle || "未命名页面"}
                               </span>
                               {round.completed ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 flex-shrink-0">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 flex-shrink-0">
                                   已完成
                                 </span>
                               ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-notion-accent/10 text-notion-accent flex-shrink-0">
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-notion-accent/10 text-notion-accent flex-shrink-0">
                                   进行中
                                 </span>
                               )}

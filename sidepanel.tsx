@@ -127,6 +127,7 @@ function SidePanel() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
   const [showCompressedDetail, setShowCompressedDetail] = useState(false)
+  const [confirmSummarize, setConfirmSummarize] = useState(false)
 
   const [knowledgeTab, setKnowledgeTab] = useState<"detail" | "library">("detail")
   const [allKnowledgeDocs, setAllKnowledgeDocs] = useState<KnowledgeDocument[]>([])
@@ -1375,6 +1376,7 @@ suggestedPath 使用文档标题。`
 
   const handleSummarize = async () => {
     if (!activeRound || activeRound.messages.length === 0) return
+    setConfirmSummarize(false)
 
     if (streamState.isStreaming) {
       abortCurrentStream()
@@ -1605,6 +1607,28 @@ suggestedPath 使用文档标题。`
           </div>
         </div>
       )}
+      {confirmSummarize && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/30">
+          <div className="bg-notion-bg rounded-2xl border border-notion-border shadow-xl p-5 mx-6 max-w-xs">
+            <h3 className="text-sm font-bold text-notion-text mb-2">结束对话并总结？</h3>
+            <p className="text-xs text-notion-text-secondary mb-4 leading-relaxed">总结后本轮对话将结束，你将无法继续追问。如需继续探讨，请取消。</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmSummarize(false)}
+                className="flex-1 px-3 py-2 text-xs font-medium text-notion-text-secondary bg-notion-bg-secondary rounded-lg border border-notion-border hover:bg-notion-hover transition-colors"
+              >
+                继续对话
+              </button>
+              <button
+                onClick={handleSummarize}
+                className="flex-1 px-3 py-2 text-xs font-medium text-white bg-notion-accent rounded-lg hover:bg-notion-accent-hover transition-colors"
+              >
+                确认总结
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <header className="flex items-center justify-between px-4 py-3 border-b border-notion-border bg-notion-bg/80 backdrop-blur-md sticky top-0 z-20 gap-2">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="w-8 h-8 bg-notion-accent rounded-lg flex-shrink-0 flex items-center justify-center shadow-sm shadow-notion-accent/20">
@@ -1622,31 +1646,27 @@ suggestedPath 使用文档标题。`
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-0.5 flex-shrink-0 overflow-x-auto">
-          {conversationStarted && !isViewingHistory && (
-            <button
-              onClick={handleKnowledgeButtonClick}
-              disabled={isGeneratingDoc || streamState.isStreaming}
-              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-30 ${showKnowledgePanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-              </svg>
-              <span>知识</span>
-            </button>
-          )}
-          {conversationStarted && activeRound && !activeRound.completed && !isViewingHistory && (
-            <button
-              onClick={handleSummarize}
-              disabled={streamState.isStreaming}
-              className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors disabled:opacity-30"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-              </svg>
-              <span>总结</span>
-            </button>
-          )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button
+            onClick={handleKnowledgeButtonClick}
+            disabled={!conversationStarted || isViewingHistory || isGeneratingDoc || streamState.isStreaming}
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-30 ${showKnowledgePanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            <span>知识</span>
+          </button>
+          <button
+            onClick={() => setConfirmSummarize(true)}
+            disabled={!conversationStarted || !activeRound || activeRound.completed || isViewingHistory || streamState.isStreaming}
+            className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors disabled:opacity-30"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+            <span>总结</span>
+          </button>
           <button
             onClick={openHistoryPanel}
             className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors"
@@ -1656,17 +1676,16 @@ suggestedPath 使用文档标题。`
             </svg>
             <span>历史</span>
           </button>
-          {conversationStarted && !isViewingHistory && (
-            <button
-              onClick={handleNewConversation}
-              className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <span>新对话</span>
-            </button>
-          )}
+          <button
+            onClick={handleNewConversation}
+            disabled={!conversationStarted || isViewingHistory}
+            className="flex items-center gap-1 px-2 py-1.5 text-notion-text-secondary hover:bg-notion-hover rounded-lg text-xs transition-colors disabled:opacity-30"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <span>新对话</span>
+          </button>
         </div>
       </header>
 
@@ -1711,7 +1730,7 @@ suggestedPath 使用文档标题。`
                         : "text-notion-text-secondary hover:bg-notion-hover"
                     }`}
                   >
-                    📚 知识库
+                    知识库
                   </button>
                 </div>
               </div>

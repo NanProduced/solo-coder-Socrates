@@ -42,7 +42,7 @@ export const NoteInput = ({
     <div className="mt-2 pl-7">
       {conceptName && (
         <div className="text-[10px] text-notion-accent font-medium mb-1">
-          📝 笔记 · {conceptName}
+          笔记 · {conceptName}
         </div>
       )}
       <textarea

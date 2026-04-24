@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState } from "react"
 import { ReviewSchedule, ReviewQuality, KeyConcept } from "../lib/types"
 import { calculateNextReview } from "../lib/spaced-repetition"
 
@@ -9,11 +9,11 @@ interface ReviewPanelProps {
   onClose: () => void
 }
 
-const QUALITY_CONFIG: { quality: ReviewQuality; label: string; emoji: string; color: string }[] = [
-  { quality: "again", label: "忘了", emoji: "😞", color: "bg-red-500/10 text-red-500 hover:bg-red-500/20" },
-  { quality: "hard", label: "模糊", emoji: "🤔", color: "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20" },
-  { quality: "good", label: "记得", emoji: "😊", color: "bg-green-500/10 text-green-500 hover:bg-green-500/20" },
-  { quality: "easy", label: "熟练", emoji: "😎", color: "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20" },
+const QUALITY_CONFIG: { quality: ReviewQuality; label: string; color: string; dotColor: string }[] = [
+  { quality: "again", label: "忘了", color: "bg-red-500/10 text-red-500 hover:bg-red-500/20", dotColor: "bg-red-500" },
+  { quality: "hard", label: "模糊", color: "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20", dotColor: "bg-amber-500" },
+  { quality: "good", label: "记得", color: "bg-green-500/10 text-green-500 hover:bg-green-500/20", dotColor: "bg-green-500" },
+  { quality: "easy", label: "熟练", color: "bg-blue-500/10 text-blue-500 hover:bg-blue-500/20", dotColor: "bg-blue-500" },
 ]
 
 export const ReviewPanel = ({
@@ -44,7 +44,7 @@ export const ReviewPanel = ({
     return (
       <div className="flex flex-col h-full">
         <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border px-4 py-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold">📝 复习</h2>
+          <h2 className="text-sm font-bold">复习</h2>
           <button
             onClick={onClose}
             className="p-1 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors"
@@ -69,7 +69,7 @@ export const ReviewPanel = ({
     return (
       <div className="flex flex-col h-full">
         <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border px-4 py-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold">📝 复习完成</h2>
+          <h2 className="text-sm font-bold">复习完成</h2>
           <button
             onClick={onClose}
             className="p-1 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors"
@@ -80,7 +80,9 @@ export const ReviewPanel = ({
           </button>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
-          <div className="text-4xl mb-4">🎉</div>
+          <svg className="w-12 h-12 text-notion-accent mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           <p className="text-sm font-medium text-notion-text">复习完成！</p>
           <p className="text-xs text-notion-text-secondary mt-1">已完成 {reviewed} 个知识点的复习</p>
           <button
@@ -98,7 +100,7 @@ export const ReviewPanel = ({
     <div className="flex flex-col h-full">
       <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border px-4 py-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold">📝 复习</h2>
+          <h2 className="text-sm font-bold">复习</h2>
           <button
             onClick={onClose}
             className="p-1 text-notion-text-secondary hover:bg-notion-hover rounded-lg transition-colors"
@@ -152,13 +154,14 @@ export const ReviewPanel = ({
               )}
 
               <div className="grid grid-cols-2 gap-2">
-                {QUALITY_CONFIG.map(({ quality, label, emoji, color }) => (
+                {QUALITY_CONFIG.map(({ quality, label, color, dotColor }) => (
                   <button
                     key={quality}
                     onClick={() => handleQuality(quality)}
-                    className={`px-4 py-3 rounded-xl text-sm font-medium transition-colors ${color}`}
+                    className={`px-4 py-3 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 ${color}`}
                   >
-                    <span className="mr-1">{emoji}</span> {label}
+                    <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                    {label}
                   </button>
                 ))}
               </div>

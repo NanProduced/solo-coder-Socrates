@@ -132,7 +132,7 @@ function OptionsPage() {
                     className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30 font-mono"
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] text-notion-text-secondary font-medium bg-notion-bg px-2 py-0.5 rounded border border-notion-border">
-                    Local storage only
+                    仅本地存储
                   </div>
                 </div>
               </div>
