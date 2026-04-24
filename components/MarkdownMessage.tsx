@@ -9,6 +9,17 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;')
 }
 
+const PLACEHOLDER_PREFIX = "\x00PH"
+
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+    .replace(/\bon\w+\s*=/gi, "")
+    .replace(/javascript\s*:/gi, "")
+    .replace(/<img\b[^>]*\bon\w+=[^>]*>/gi, "")
+}
+
 interface MarkdownMessageProps {
   content: string
   isUser: boolean
@@ -21,13 +32,13 @@ export const MarkdownMessage = ({ content, isUser }: MarkdownMessageProps) => {
     const codeBlocks: string[] = []
     html = html.replace(/```(\w+)?\s*\n([\s\S]*?)\n```/g, (match, lang, code) => {
       codeBlocks.push(escapeHtml(code))
-      return `__CODE_BLOCK_${codeBlocks.length - 1}__`
+      return `${PLACEHOLDER_PREFIX}CB${codeBlocks.length - 1}__`
     })
 
     const inlineCodes: string[] = []
     html = html.replace(/`([^`]+)`/g, (match, code) => {
       inlineCodes.push(escapeHtml(code))
-      return `__INLINE_CODE_${inlineCodes.length - 1}__`
+      return `${PLACEHOLDER_PREFIX}IC${inlineCodes.length - 1}__`
     })
 
     html = escapeHtml(html)
@@ -59,18 +70,18 @@ export const MarkdownMessage = ({ content, isUser }: MarkdownMessageProps) => {
       html = '<p class="mb-2 last:mb-0">' + html + '</p>'
     }
 
-    html = html.replace(/__INLINE_CODE_(\d+)__/g, (match, index) => {
+    html = html.replace(new RegExp(`${PLACEHOLDER_PREFIX.replace(/\x00/g, '\\x00')}IC(\\d+)__`, 'g'), (match, index) => {
       const code = inlineCodes[parseInt(index)]
       const bgClass = isUser ? 'bg-white/20' : 'bg-notion-bg-secondary text-notion-text'
       return `<code class="px-1.5 py-0.5 rounded text-xs font-mono ${bgClass}">${code}</code>`
     })
 
-    html = html.replace(/__CODE_BLOCK_(\d+)__/g, (match, index) => {
+    html = html.replace(new RegExp(`${PLACEHOLDER_PREFIX.replace(/\x00/g, '\\x00')}CB(\\d+)__`, 'g'), (match, index) => {
       const code = codeBlocks[parseInt(index)]
       return `<pre class="my-2"><code class="block px-3 py-2 rounded bg-notion-bg-secondary text-notion-text text-xs font-mono overflow-x-auto">${code}</code></pre>`
     })
 
-    return html
+    return sanitizeHtml(html)
   }, [content, isUser])
 
   return (

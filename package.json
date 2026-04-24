@@ -39,7 +39,9 @@
     "permissions": [
       "activeTab",
       "storage",
-      "scripting",
+      "scripting"
+    ],
+    "optional_permissions": [
       "cookies"
     ],
     "web_accessible_resources": [

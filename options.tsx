@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useStorage } from "@plasmohq/storage/hook"
-import { OpenAIConfig, DEFAULT_OPENAI_CONFIG } from "./lib/types"
+import { OpenAIConfig, DEFAULT_OPENAI_CONFIG, ConversationMode } from "./lib/types"
 import { testApiConnection } from "./lib/llm"
 import "./style.css"
 
@@ -10,6 +10,9 @@ function OptionsPage() {
   const [baseURL, setBaseURL] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [model, setModel] = useState("")
+  const [defaultConversationMode, setDefaultConversationMode] = useState<ConversationMode>("free")
+  const [languagePreference, setLanguagePreference] = useState<"auto" | "zh" | "en">("auto")
+  const [compressThreshold, setCompressThreshold] = useState(8000)
   const [saved, setSaved] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
@@ -20,6 +23,9 @@ function OptionsPage() {
       setBaseURL(config.baseURL || "")
       setApiKey(config.apiKey || "")
       setModel(config.model || "")
+      setDefaultConversationMode(config.defaultConversationMode || "free")
+      setLanguagePreference(config.languagePreference || "auto")
+      setCompressThreshold(config.compressThreshold || 8000)
     }
   }, [config])
 
@@ -35,7 +41,14 @@ function OptionsPage() {
     if (!trimmedApiKey) { setValidationError("请填写 API 密钥"); return }
     if (!trimmedModel) { setValidationError("请填写模型名称"); return }
 
-    setConfig({ baseURL: trimmedBaseURL, apiKey: trimmedApiKey, model: trimmedModel })
+    setConfig({
+      baseURL: trimmedBaseURL,
+      apiKey: trimmedApiKey,
+      model: trimmedModel,
+      defaultConversationMode,
+      languagePreference,
+      compressThreshold,
+    })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
@@ -135,6 +148,56 @@ function OptionsPage() {
                   placeholder="gpt-4o"
                   className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all placeholder:opacity-30"
                 />
+              </div>
+
+              <div className="border-t border-notion-border/50 pt-6 mt-2">
+                <h3 className="text-xs font-bold text-notion-text-secondary uppercase tracking-wider mb-4">对话偏好</h3>
+                <div className="space-y-4">
+                  <div className="group">
+                    <label className="block text-xs font-bold text-notion-text-secondary mb-2 group-focus-within:text-notion-accent transition-colors">
+                      默认对话模式
+                    </label>
+                    <select
+                      value={defaultConversationMode}
+                      onChange={(e) => setDefaultConversationMode(e.target.value as ConversationMode)}
+                      className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all"
+                    >
+                      <option value="free">思辨模式（自由问答）</option>
+                      <option value="guided">引导模式（选择题）</option>
+                    </select>
+                  </div>
+
+                  <div className="group">
+                    <label className="block text-xs font-bold text-notion-text-secondary mb-2 group-focus-within:text-notion-accent transition-colors">
+                      对话语言偏好
+                    </label>
+                    <select
+                      value={languagePreference}
+                      onChange={(e) => setLanguagePreference(e.target.value as "auto" | "zh" | "en")}
+                      className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all"
+                    >
+                      <option value="auto">跟随文档语言</option>
+                      <option value="zh">中文</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+
+                  <div className="group">
+                    <label className="block text-xs font-bold text-notion-text-secondary mb-2 group-focus-within:text-notion-accent transition-colors">
+                      上下文压缩阈值（token）
+                    </label>
+                    <input
+                      type="number"
+                      value={compressThreshold}
+                      onChange={(e) => setCompressThreshold(Number(e.target.value) || 8000)}
+                      min={4000}
+                      max={32000}
+                      step={1000}
+                      className="w-full bg-notion-bg-secondary px-4 py-3 border border-notion-border rounded-xl text-notion-text focus:outline-none focus:ring-2 focus:ring-notion-accent/20 focus:border-notion-accent transition-all"
+                    />
+                    <p className="text-[10px] text-notion-text-secondary mt-1 opacity-60">当对话超过此 token 数时，自动压缩早期对话。默认 8000。</p>
+                  </div>
+                </div>
               </div>
             </div>
 

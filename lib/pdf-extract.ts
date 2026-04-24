@@ -15,6 +15,8 @@ export interface PdfExtractResult {
   error?: string
 }
 
+const MAX_PAGES = 50
+
 export function isFileUrl(url: string): boolean {
   try {
     return new URL(url).protocol === "file:"
@@ -36,6 +38,63 @@ export function isPdfUrl(url: string): boolean {
   } catch {
     return url.toLowerCase().includes(".pdf")
   }
+}
+
+function extractPageText(textContent: { items: any[] }): string {
+  const items = textContent.items.filter((item): item is TextItem => "str" in item)
+  if (items.length === 0) return ""
+
+  const lines: string[] = []
+  let currentLine = ""
+  let lastY: number | null = null
+  let lastX: number | null = null
+  let lineHeight: number | null = null
+
+  for (const item of items) {
+    const tx = item.transform
+    const x = tx[4]
+    const y = tx[5]
+    const fontSize = Math.abs(tx[0]) || Math.abs(tx[3]) || 12
+
+    if (lastY === null) {
+      currentLine = item.str
+      lastY = y
+      lastX = x + (item.width || 0)
+      lineHeight = fontSize
+      continue
+    }
+
+    const yDiff = Math.abs(lastY - y)
+
+    if (yDiff > (lineHeight || fontSize) * 0.5) {
+      if (currentLine.trim()) {
+        lines.push(currentLine.trim())
+      }
+
+      if (yDiff > (lineHeight || fontSize) * 1.5) {
+        lines.push("")
+      }
+
+      currentLine = item.str
+      lastY = y
+      lastX = x + (item.width || 0)
+      lineHeight = fontSize
+    } else {
+      const gap = x - (lastX || 0)
+      if (gap > fontSize * 0.5) {
+        currentLine += " " + item.str
+      } else {
+        currentLine += item.str
+      }
+      lastX = x + (item.width || 0)
+    }
+  }
+
+  if (currentLine.trim()) {
+    lines.push(currentLine.trim())
+  }
+
+  return lines.join("\n")
 }
 
 export async function extractPdfFromUrl(
@@ -84,7 +143,8 @@ export async function extractPdfFromData(
 ): Promise<PdfExtractResult> {
   try {
     const pdf = await pdfjsLib.getDocument({ data }).promise
-    const pageCount = pdf.numPages
+    const totalPageCount = pdf.numPages
+    const pagesToExtract = Math.min(totalPageCount, MAX_PAGES)
     const textParts: string[] = []
 
     let title = ""
@@ -104,15 +164,10 @@ export async function extractPdfFromData(
       } catch {}
     }
 
-    for (let i = 1; i <= pageCount; i++) {
+    for (let i = 1; i <= pagesToExtract; i++) {
       const page = await pdf.getPage(i)
       const textContent = await page.getTextContent()
-      const pageText = textContent.items
-        .filter((item): item is TextItem => "str" in item)
-        .map((item) => item.str)
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim()
+      const pageText = extractPageText(textContent)
 
       if (pageText) {
         textParts.push(pageText)
@@ -120,12 +175,15 @@ export async function extractPdfFromData(
     }
 
     const content = textParts.join("\n\n")
+    const truncated = totalPageCount > MAX_PAGES
 
     return {
       success: true,
       title: title || "PDF Document",
-      content,
-      pageCount,
+      content: truncated
+        ? content + `\n\n[...文档共 ${totalPageCount} 页，已提取前 ${MAX_PAGES} 页...]`
+        : content,
+      pageCount: totalPageCount,
     }
   } catch (error) {
     return {
@@ -142,6 +200,7 @@ export async function getCookiesForUrl(url: string): Promise<string> {
   if (isFileUrl(url)) return ""
 
   try {
+    if (!chrome.cookies) return ""
     const urlObj = new URL(url)
     const cookies = await chrome.cookies.getAll({ domain: urlObj.hostname })
     return cookies.map((c) => `${c.name}=${c.value}`).join("; ")

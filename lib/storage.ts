@@ -1,11 +1,13 @@
 import { Storage } from "@plasmohq/storage"
-import { ConversationRound, UnderstandingStatus, KnowledgeDocument } from "./types"
+import { ConversationRound, UnderstandingStatus, KnowledgeDocument, ReviewSchedule, Note } from "./types"
 
 const storage = new Storage({ area: "local" })
 
 const CONVERSATION_KEY_PREFIX = "page-conversations:"
 const UNDERSTANDING_STATUS_KEY_PREFIX = "understanding-status:"
 const KNOWLEDGE_DOC_KEY_PREFIX = "knowledge-doc:"
+const REVIEW_SCHEDULE_KEY_PREFIX = "review-schedule:"
+const NOTES_KEY_PREFIX = "notes:"
 
 export function getPageConversationsKey(pageKey: string): string {
   return CONVERSATION_KEY_PREFIX + pageKey
@@ -177,4 +179,64 @@ export async function loadAllKnowledgeDocuments(): Promise<KnowledgeDocument[]> 
 
   docs.sort((a, b) => b.updatedAt - a.updatedAt)
   return docs
+}
+
+export async function saveReviewSchedules(
+  pageKey: string,
+  schedules: ReviewSchedule[]
+): Promise<void> {
+  const key = REVIEW_SCHEDULE_KEY_PREFIX + pageKey
+  await chrome.storage.local.set({ [key]: schedules })
+}
+
+export async function loadReviewSchedules(
+  pageKey: string
+): Promise<ReviewSchedule[]> {
+  const key = REVIEW_SCHEDULE_KEY_PREFIX + pageKey
+  const data = await chrome.storage.local.get(key)
+  return (data[key] as ReviewSchedule[]) || []
+}
+
+export async function loadAllReviewSchedules(): Promise<ReviewSchedule[]> {
+  const allData = await chrome.storage.local.get(null)
+  const schedules: ReviewSchedule[] = []
+
+  for (const [key, value] of Object.entries(allData)) {
+    if (key.startsWith(REVIEW_SCHEDULE_KEY_PREFIX) && Array.isArray(value)) {
+      schedules.push(...(value as ReviewSchedule[]))
+    }
+  }
+
+  return schedules
+}
+
+export async function loadDueReviews(): Promise<ReviewSchedule[]> {
+  const all = await loadAllReviewSchedules()
+  const now = Date.now()
+  return all.filter((s) => s.nextReviewAt <= now)
+}
+
+export async function saveNotes(
+  pageKey: string,
+  notes: Note[]
+): Promise<void> {
+  const key = NOTES_KEY_PREFIX + pageKey
+  await chrome.storage.local.set({ [key]: notes })
+}
+
+export async function loadNotes(
+  pageKey: string
+): Promise<Note[]> {
+  const key = NOTES_KEY_PREFIX + pageKey
+  const data = await chrome.storage.local.get(key)
+  return (data[key] as Note[]) || []
+}
+
+export async function deleteNotes(
+  pageKeys: string[]
+): Promise<void> {
+  const keys = pageKeys.map((pk) => NOTES_KEY_PREFIX + pk)
+  if (keys.length > 0) {
+    await chrome.storage.local.remove(keys)
+  }
 }

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react"
-import { KnowledgeDocument, CrossDocAnalysis } from "../lib/types"
+import { KnowledgeDocument, CrossDocAnalysis, ReviewSchedule } from "../lib/types"
+import { ConceptGraph } from "./ConceptGraph"
 
 interface KnowledgeLibraryPanelProps {
   allDocs: KnowledgeDocument[]
@@ -8,9 +9,11 @@ interface KnowledgeLibraryPanelProps {
   onDeleteDocs: (pageKeys: string[]) => void
   onExportAll: () => void
   onAnalyzeRelations: () => void
+  onStartReview: () => void
   crossDocAnalysis: CrossDocAnalysis | null
   isAnalyzing: boolean
   isExporting: boolean
+  dueReviewCount: number
 }
 
 const STAGE_CONFIG: Record<string, { color: string; bg: string; dot: string }> = {
@@ -65,9 +68,11 @@ export const KnowledgeLibraryPanel = ({
   onDeleteDocs,
   onExportAll,
   onAnalyzeRelations,
+  onStartReview,
   crossDocAnalysis,
   isAnalyzing,
   isExporting,
+  dueReviewCount,
 }: KnowledgeLibraryPanelProps) => {
   const [searchQuery, setSearchQuery] = useState("")
   const [stageFilter, setStageFilter] = useState<string>("all")
@@ -313,6 +318,12 @@ export const KnowledgeLibraryPanel = ({
 
             {crossDocAnalysis && !isAnalyzing && (
               <>
+                <ConceptGraph
+                  analysis={crossDocAnalysis}
+                  docs={allDocs}
+                  onDocClick={onOpenDoc}
+                />
+
                 {crossDocAnalysis.summary && (
                   <div className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30">
                     <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">关联摘要</h3>
@@ -509,6 +520,14 @@ export const KnowledgeLibraryPanel = ({
       {!editMode && allDocs.length > 0 && (
         <div className="border-t border-notion-border bg-notion-bg px-4 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            {dueReviewCount > 0 && (
+              <button
+                onClick={onStartReview}
+                className="text-[11px] font-medium px-3 py-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg hover:bg-amber-500/20 transition-colors"
+              >
+                📝 复习 ({dueReviewCount})
+              </button>
+            )}
             {allDocs.length >= 2 && (
               <button
                 onClick={onAnalyzeRelations}

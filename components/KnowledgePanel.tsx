@@ -1,4 +1,6 @@
-import { KnowledgeDocument } from "../lib/types"
+import { useState } from "react"
+import { KnowledgeDocument, Note } from "../lib/types"
+import { NoteInput, NoteItem } from "./NoteInput"
 
 interface KnowledgePanelProps {
   knowledgeDoc: KnowledgeDocument | null
@@ -8,6 +10,10 @@ interface KnowledgePanelProps {
   onUpdate: () => void
   onExport: () => void
   onBackToLibrary?: () => void
+  notes?: Note[]
+  onAddNote?: (conceptName: string | undefined, content: string) => void
+  onUpdateNote?: (noteId: string, content: string) => void
+  onDeleteNote?: (noteId: string) => void
 }
 
 const formatTime = (timestamp: number): string => {
@@ -33,7 +39,33 @@ export const KnowledgePanel = ({
   onUpdate,
   onExport,
   onBackToLibrary,
+  notes = [],
+  onAddNote,
+  onUpdateNote,
+  onDeleteNote,
 }: KnowledgePanelProps) => {
+  const [addingNoteFor, setAddingNoteFor] = useState<string | undefined>(undefined)
+  const [editingNote, setEditingNote] = useState<Note | null>(null)
+  const [showGeneralNoteInput, setShowGeneralNoteInput] = useState(false)
+
+  const notesForConcept = (conceptName: string) =>
+    notes.filter((n) => n.conceptName === conceptName)
+
+  const generalNotes = notes.filter((n) => !n.conceptName)
+
+  const handleSaveNewNote = (conceptName: string | undefined, content: string) => {
+    onAddNote?.(conceptName, content)
+    setAddingNoteFor(undefined)
+    setShowGeneralNoteInput(false)
+  }
+
+  const handleSaveEditNote = (content: string) => {
+    if (editingNote) {
+      onUpdateNote?.(editingNote.id, content)
+      setEditingNote(null)
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="sticky top-0 z-10 bg-notion-bg/95 backdrop-blur-md border-b border-notion-border">
@@ -145,30 +177,77 @@ export const KnowledgePanel = ({
               <div>
                 <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">知识卡片</h3>
                 <div className="space-y-3">
-                  {knowledgeDoc.knowledgeCards.map((card, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30"
-                    >
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <div className="w-5 h-5 bg-notion-accent/10 rounded flex items-center justify-center flex-shrink-0">
-                          <span className="text-[10px] font-bold text-notion-accent">{idx + 1}</span>
+                  {knowledgeDoc.knowledgeCards.map((card, idx) => {
+                    const cardNotes = notesForConcept(card.concept)
+                    const isAdding = addingNoteFor === card.concept
+
+                    return (
+                      <div
+                        key={idx}
+                        className="p-3 bg-notion-bg-secondary rounded-xl border border-notion-border/30"
+                      >
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <div className="w-5 h-5 bg-notion-accent/10 rounded flex items-center justify-center flex-shrink-0">
+                            <span className="text-[10px] font-bold text-notion-accent">{idx + 1}</span>
+                          </div>
+                          <span className="text-sm font-semibold text-notion-text">{card.concept}</span>
+                          {onAddNote && (
+                            <button
+                              onClick={() => {
+                                setAddingNoteFor(isAdding ? undefined : card.concept)
+                                setEditingNote(null)
+                              }}
+                              className="ml-auto text-notion-text-secondary hover:text-notion-accent transition-colors"
+                              title="添加笔记"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          )}
                         </div>
-                        <span className="text-sm font-semibold text-notion-text">{card.concept}</span>
+                        <p className="text-xs text-notion-text-secondary mb-2 pl-7">{card.explanation}</p>
+                        {card.keyPoints.length > 0 && (
+                          <ul className="space-y-1 pl-7">
+                            {card.keyPoints.map((point, pIdx) => (
+                              <li key={pIdx} className="text-xs text-notion-text-secondary flex items-start gap-1.5">
+                                <span className="text-notion-accent/60 mt-0.5 flex-shrink-0">·</span>
+                                <span>{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {cardNotes.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-notion-border/20 space-y-2">
+                            {cardNotes.map((note) =>
+                              editingNote?.id === note.id ? (
+                                <NoteInput
+                                  key={note.id}
+                                  existingNote={editingNote}
+                                  onSave={handleSaveEditNote}
+                                  onCancel={() => setEditingNote(null)}
+                                />
+                              ) : (
+                                <NoteItem
+                                  key={note.id}
+                                  note={note}
+                                  onEdit={setEditingNote}
+                                  onDelete={(id) => onDeleteNote?.(id)}
+                                />
+                              )
+                            )}
+                          </div>
+                        )}
+                        {isAdding && (
+                          <NoteInput
+                            conceptName={card.concept}
+                            onSave={(content) => handleSaveNewNote(card.concept, content)}
+                            onCancel={() => setAddingNoteFor(undefined)}
+                          />
+                        )}
                       </div>
-                      <p className="text-xs text-notion-text-secondary mb-2 pl-7">{card.explanation}</p>
-                      {card.keyPoints.length > 0 && (
-                        <ul className="space-y-1 pl-7">
-                          {card.keyPoints.map((point, pIdx) => (
-                            <li key={pIdx} className="text-xs text-notion-text-secondary flex items-start gap-1.5">
-                              <span className="text-notion-accent/60 mt-0.5 flex-shrink-0">·</span>
-                              <span>{point}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -218,6 +297,58 @@ export const KnowledgePanel = ({
                 )}
               </div>
             </div>
+
+            {onAddNote && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider">
+                    📝 笔记
+                  </h3>
+                  <button
+                    onClick={() => {
+                      setShowGeneralNoteInput(!showGeneralNoteInput)
+                      setAddingNoteFor(undefined)
+                      setEditingNote(null)
+                    }}
+                    className="text-[11px] text-notion-accent hover:text-notion-accent-hover font-medium transition-colors"
+                  >
+                    + 添加笔记
+                  </button>
+                </div>
+                {generalNotes.length > 0 && (
+                  <div className="space-y-2 mb-2">
+                    {generalNotes.map((note) =>
+                      editingNote?.id === note.id ? (
+                        <NoteInput
+                          key={note.id}
+                          existingNote={editingNote}
+                          onSave={handleSaveEditNote}
+                          onCancel={() => setEditingNote(null)}
+                        />
+                      ) : (
+                        <NoteItem
+                          key={note.id}
+                          note={note}
+                          onEdit={setEditingNote}
+                          onDelete={(id) => onDeleteNote?.(id)}
+                        />
+                      )
+                    )}
+                  </div>
+                )}
+                {showGeneralNoteInput && (
+                  <NoteInput
+                    onSave={(content) => handleSaveNewNote(undefined, content)}
+                    onCancel={() => setShowGeneralNoteInput(false)}
+                  />
+                )}
+                {generalNotes.length === 0 && !showGeneralNoteInput && (
+                  <p className="text-xs text-notion-text-secondary opacity-50 pl-1">
+                    在知识卡片上点击 ✏️ 可为特定概念添加笔记
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="text-center pt-2 pb-4">
               <span className="text-[10px] text-notion-text-secondary opacity-60">

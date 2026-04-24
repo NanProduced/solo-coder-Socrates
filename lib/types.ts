@@ -2,12 +2,18 @@ export interface OpenAIConfig {
   baseURL: string
   apiKey: string
   model: string
+  defaultConversationMode?: ConversationMode
+  languagePreference?: "auto" | "zh" | "en"
+  compressThreshold?: number
 }
 
 export const DEFAULT_OPENAI_CONFIG: OpenAIConfig = {
   baseURL: "",
   apiKey: "",
-  model: "gpt-4o"
+  model: "gpt-4o",
+  defaultConversationMode: "free",
+  languagePreference: "auto",
+  compressThreshold: 8000,
 }
 
 export type ConversationMode = "free" | "guided"
@@ -137,6 +143,27 @@ export interface CrossDocAnalysis {
   relations: CrossDocRelation[]
   suggestedPath: string[]
   summary: string
+}
+
+export interface Note {
+  id: string
+  pageKey: string
+  conceptName?: string
+  content: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type ReviewQuality = "again" | "hard" | "good" | "easy"
+
+export interface ReviewSchedule {
+  pageKey: string
+  conceptName: string
+  nextReviewAt: number
+  interval: number
+  easeFactor: number
+  reviewCount: number
+  lastReviewAt: number | null
 }
 
 export function isSummaryRequest(content: string): boolean {

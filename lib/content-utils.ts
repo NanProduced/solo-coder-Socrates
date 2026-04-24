@@ -202,3 +202,65 @@ export function buildContextPrompt(
 
   return prompt
 }
+
+export interface DocumentSection {
+  index: number
+  title: string
+  content: string
+  charCount: number
+  level: number
+}
+
+export function splitIntoSections(content: string): DocumentSection[] {
+  const lines = content.split("\n")
+  const sections: DocumentSection[] = []
+  let currentTitle = ""
+  let currentContent: string[] = []
+  let currentLevel = 0
+  let sectionIndex = 0
+
+  const headingRegex = /^(#{1,6})\s+(.+)$/
+
+  const flushSection = () => {
+    const text = currentContent.join("\n").trim()
+    if (text.length > 50 || currentTitle) {
+      sections.push({
+        index: sectionIndex++,
+        title: currentTitle || (sectionIndex === 1 ? "开头部分" : `第 ${sectionIndex} 节`),
+        content: text,
+        charCount: text.length,
+        level: currentLevel,
+      })
+    }
+  }
+
+  for (const line of lines) {
+    const match = line.match(headingRegex)
+    if (match) {
+      flushSection()
+      currentLevel = match[1].length
+      currentTitle = match[2].trim()
+      currentContent = []
+    } else {
+      currentContent.push(line)
+    }
+  }
+
+  flushSection()
+
+  if (sections.length === 0 && content.trim().length > 0) {
+    sections.push({
+      index: 0,
+      title: "全文",
+      content: content.trim(),
+      charCount: content.trim().length,
+      level: 0,
+    })
+  }
+
+  return sections
+}
+
+export function isLongDocument(content: string, threshold: number = 15000): boolean {
+  return estimateTokens(content) > threshold
+}
