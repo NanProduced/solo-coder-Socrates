@@ -43,6 +43,13 @@ import {
   formatStructuredContent,
   formatDisplayContent,
 } from "./lib/output-contract"
+import {
+  COMPRESS_PROMPT,
+  shouldCompress,
+  buildCompressedMessages,
+  getCompressedBeforeMessageId,
+  getCompressedRoundCount,
+} from "./lib/context-compress"
 import "./style.css"
 
 const SOCRATES_SYSTEM_PROMPT = `你是苏格拉底，一位伟大的哲学家和导师。你的教学方法是通过提问来引导学生自己发现真理，而不是直接给出答案。
@@ -378,6 +385,7 @@ function SidePanel() {
   const [understandingStatus, setUnderstandingStatus] = useState<UnderstandingStatus | null>(null)
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
   const [showStatusDetail, setShowStatusDetail] = useState(false)
+  const [showCompressedDetail, setShowCompressedDetail] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -832,6 +840,16 @@ function SidePanel() {
     if (!round) return ""
     const visibleMessages = round.messages.filter((m) => m.visible)
     if (visibleMessages.length === 0) return ""
+
+    if (round.compressedSummary && round.compressedBeforeMessageId) {
+      const boundaryIndex = visibleMessages.findIndex((m) => m.id === round.compressedBeforeMessageId)
+      const recentMessages = boundaryIndex >= 0 ? visibleMessages.slice(boundaryIndex) : visibleMessages
+      const contextLines = recentMessages.map(
+        (m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`
+      )
+      return "\n\n--- 对话历史（含早期摘要） ---\n[早期摘要]: " + round.compressedSummary + "\n" + contextLines.join("\n")
+    }
+
     const contextLines = visibleMessages.map(
       (m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`
     )
@@ -877,6 +895,52 @@ function SidePanel() {
       updateUnderstandingStatus()
     }, 3000)
   }, [updateUnderstandingStatus])
+
+  const compressContext = useCallback(async (round: ConversationRound): Promise<ConversationRound> => {
+    const boundaryId = getCompressedBeforeMessageId(round)
+    if (!boundaryId) return round
+
+    const visibleMessages = round.messages.filter((m) => m.visible)
+    const boundaryIndex = visibleMessages.findIndex((m) => m.id === boundaryId)
+    const messagesToCompress = visibleMessages.slice(0, boundaryIndex)
+
+    if (messagesToCompress.length === 0) return round
+
+    try {
+      const conversationText = messagesToCompress
+        .map((m) => `${m.role === "user" ? "用户" : "苏格拉底"}: ${m.content}`)
+        .join("\n")
+
+      const existingSummary = round.compressedSummary
+        ? `已有摘要：\n${round.compressedSummary}\n\n新增对话：\n`
+        : ""
+
+      const summary = await callLLM(config, [
+        { id: "", role: "system", content: COMPRESS_PROMPT, timestamp: Date.now(), visible: false },
+        { id: "", role: "user", content: existingSummary + conversationText, timestamp: Date.now(), visible: false },
+      ], 1000)
+
+      const updatedRound: ConversationRound = {
+        ...round,
+        compressedSummary: summary,
+        compressedBeforeMessageId: boundaryId,
+      }
+
+      setRounds((prev) => {
+        const updated = prev.map((r) =>
+          r.id === round.id ? { ...r, compressedSummary: summary, compressedBeforeMessageId: boundaryId } : r
+        )
+        const currentKey = pageKeyRef.current
+        if (currentKey) {
+          savePageConversations(currentKey, updated)
+        }
+        return updated
+      })
+      return updatedRound
+    } catch {
+      return round
+    }
+  }, [config])
 
   const generateKnowledgeDocument = useCallback(async () => {
     const currentKey = pageKeyRef.current
@@ -1038,6 +1102,8 @@ function SidePanel() {
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
         setKnowledgeDoc(null)
+        setShowStatusDetail(false)
+        setShowCompressedDetail(false)
         return
       }
 
@@ -1061,6 +1127,8 @@ function SidePanel() {
         setUnderstandingStatus(null)
         setShowKnowledgePanel(false)
         setKnowledgeDoc(null)
+        setShowStatusDetail(false)
+        setShowCompressedDetail(false)
         return
       }
 
@@ -1106,6 +1174,7 @@ function SidePanel() {
       setShowKnowledgePanel(false)
       setKnowledgeDoc(null)
       setShowStatusDetail(false)
+      setShowCompressedDetail(false)
       setErrorMessage(null)
 
       const loadedStatus = await loadUnderstandingStatus(key)
@@ -1496,9 +1565,15 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
+      let roundForLLM = { ...roundAfterUser, messages: messagesAfterUser }
+      if (shouldCompress(roundForLLM)) {
+        const compressed = await compressContext(roundForLLM)
+        roundForLLM = compressed
+      }
+      const messagesForLLM = buildCompressedMessages(roundForLLM)
       const rawText = await callLLMStream(
         config,
-        messagesAfterUser,
+        messagesForLLM,
         (chunk) => {
           streamAccumulatedRef.current += chunk
           const displayContent = extractStreamingDisplay(streamAccumulatedRef.current)
@@ -1650,7 +1725,8 @@ function SidePanel() {
 
     streamAccumulatedRef.current = ""
     try {
-      const messagesForAI = [...currentRound.messages, internalInstruction]
+      const roundWithInstruction = { ...currentRound, messages: [...currentRound.messages, internalInstruction] }
+      const messagesForAI = buildCompressedMessages(roundWithInstruction)
       const rawText = await callLLMStream(
         config,
         messagesForAI,
@@ -1827,7 +1903,7 @@ function SidePanel() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-0.5 flex-shrink-0">
+        <div className="flex items-center gap-0.5 flex-shrink-0 overflow-x-auto">
           {conversationStarted && !isViewingHistory && (
             <button
               onClick={handleKnowledgeButtonClick}
@@ -2393,6 +2469,29 @@ function SidePanel() {
               </div>
             ) : (
               <div className="p-5 space-y-8 pb-32">
+                {viewingRound?.compressedSummary && viewingRound?.compressedBeforeMessageId && (
+                  <div className="mb-2">
+                    <button
+                      onClick={() => setShowCompressedDetail(!showCompressedDetail)}
+                      className="w-full flex items-center gap-1.5 px-3 py-1.5 text-xs text-notion-text-secondary bg-notion-bg-secondary rounded-lg border border-notion-border/30 hover:bg-notion-hover transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                      </svg>
+                      <span>已压缩前 {getCompressedRoundCount(viewingRound)} 轮对话</span>
+                      <svg className={`w-3 h-3 ml-auto transition-transform ${showCompressedDetail ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${showCompressedDetail ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+                      <div className="overflow-hidden">
+                        <div className="mt-1.5 px-3 py-2 text-xs text-notion-text-secondary bg-notion-bg-secondary/50 rounded-lg border border-notion-border/20 leading-relaxed">
+                          {viewingRound.compressedSummary}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {displayMessages.map((message) => (
                   <div
                     key={message.id}

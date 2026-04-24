@@ -44,6 +44,8 @@ export interface ConversationRound {
   pageTitle: string
   pageUrl: string
   conversationMode?: ConversationMode
+  compressedSummary?: string
+  compressedBeforeMessageId?: string
 }
 
 export const TRACKING_PARAMS: string[] = [

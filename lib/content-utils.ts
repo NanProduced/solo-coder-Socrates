@@ -9,7 +9,7 @@ export interface ContentMeta {
 const CHARS_PER_TOKEN_ZH = 1.5
 const CHARS_PER_TOKEN_EN = 4
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   let zhChars = 0
   let enChars = 0
 
