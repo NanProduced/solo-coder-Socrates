@@ -132,3 +132,41 @@ export function isSummaryRequest(content: string): boolean {
   if (/^总结[了啊吧]?$/i.test(lower.trim())) return true
   return false
 }
+
+export interface DocumentRelation {
+  sourcePageKey: string
+  targetPageKey: string
+  relationType: "prerequisite" | "complementary" | "extension" | "alternative"
+  description: string
+  strength: number
+}
+
+export interface ConceptRelation {
+  concept: string
+  relationType: "common" | "complementary" | "dependent" | "conflicting"
+  appearingDocuments: string[]
+  description: string
+}
+
+export interface LearningPathStep {
+  pageKey: string
+  reason: string
+  estimatedDifficulty: "beginner" | "intermediate" | "advanced"
+  prerequisites: string[]
+}
+
+export interface CrossDocumentAnalysis {
+  documentRelations: DocumentRelation[]
+  conceptRelations: ConceptRelation[]
+  recommendedLearningPath: LearningPathStep[]
+  overallRecommendation: string
+  keyInsights: string[]
+}
+
+export interface CrossDocumentAnalysisState {
+  status: "idle" | "loading" | "success" | "error"
+  result?: CrossDocumentAnalysis
+  error?: string
+  documentCount: number
+  truncated: boolean
+}
