@@ -12,6 +12,7 @@ import {
   UnderstandingStatus,
   KnowledgeDocument,
   CrossDocAnalysis,
+  PageNote,
 } from "./lib/types"
 import {
   loadPageConversations,
@@ -25,6 +26,10 @@ import {
   saveKnowledgeDocument,
   loadAllKnowledgeDocuments,
   deleteKnowledgeDocuments,
+  loadPageNotes,
+  savePageNote,
+  deletePageNote,
+  deletePageNotes,
 } from "./lib/storage"
 import { KnowledgePanel } from "./components/KnowledgePanel"
 import { KnowledgeLibraryPanel } from "./components/KnowledgeLibraryPanel"
@@ -66,7 +71,9 @@ import {
   DOC_STATUS_PROMPT,
   EXPORT_PROMPT,
   buildLearningStatusContext,
+  buildPageNotesContext,
   type StatusMode,
+  type NotesMode,
 } from "./lib/prompts"
 import {
   parseLLMJson,
@@ -119,6 +126,13 @@ function SidePanel() {
   const [isAnalyzingRelations, setIsAnalyzingRelations] = useState(false)
   const [isExportingAll, setIsExportingAll] = useState(false)
   const [libraryDocKey, setLibraryDocKey] = useState<string | null>(null)
+
+  const [showNotesPanel, setShowNotesPanel] = useState(false)
+  const [pageNotes, setPageNotes] = useState<PageNote[]>([])
+  const [newNoteText, setNewNoteText] = useState("")
+  const [newNoteSelectedText, setNewNoteSelectedText] = useState("")
+  const [isSavingNote, setIsSavingNote] = useState(false)
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -967,6 +981,137 @@ suggestedPath 使用文档标题。`
     }
   }, [allKnowledgeDocs, config])
 
+  const handleNotesButtonClick = useCallback(async () => {
+    if (showNotesPanel) {
+      setShowNotesPanel(false)
+      return
+    }
+    const currentKey = pageKeyRef.current
+    if (!currentKey) return
+    
+    const loadedNotes = await loadPageNotes(currentKey)
+    setPageNotes(loadedNotes)
+    setShowNotesPanel(true)
+    setNewNoteText("")
+    setNewNoteSelectedText("")
+  }, [showNotesPanel])
+
+  const getSelectedTextFromPage = useCallback(async (): Promise<string> => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tab?.id) return ""
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          return window.getSelection()?.toString() || ""
+        },
+      })
+
+      if (results && results[0]?.result) {
+        return results[0].result as string
+      }
+    } catch (error) {
+      console.error("Failed to get selected text:", error)
+    }
+    return ""
+  }, [])
+
+  const handleSaveNote = useCallback(async () => {
+    const currentKey = pageKeyRef.current
+    if (!currentKey) return
+
+    let selectedText = newNoteSelectedText.trim()
+    if (!selectedText) {
+      selectedText = await getSelectedTextFromPage()
+    }
+
+    if (!selectedText) {
+      setErrorMessage("请先在网页中选中要批注的文本")
+      return
+    }
+
+    setIsSavingNote(true)
+    try {
+      const note: PageNote = {
+        id: generateId(),
+        pageKey: currentKey,
+        selectedText: selectedText,
+        note: newNoteText.trim() || undefined,
+        pageTitle: pageTitle,
+        pageUrl: pageUrl,
+        createdAt: Date.now(),
+      }
+
+      await savePageNote(currentKey, note)
+      
+      const updatedNotes = await loadPageNotes(currentKey)
+      setPageNotes(updatedNotes)
+      
+      setNewNoteText("")
+      setNewNoteSelectedText("")
+      setErrorMessage(null)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "保存笔记失败")
+    } finally {
+      setIsSavingNote(false)
+    }
+  }, [newNoteText, newNoteSelectedText, pageTitle, pageUrl, getSelectedTextFromPage])
+
+  const handleDeleteNote = useCallback(async (noteId: string) => {
+    const currentKey = pageKeyRef.current
+    if (!currentKey) return
+
+    setDeletingNoteId(noteId)
+    try {
+      await deletePageNote(currentKey, noteId)
+      
+      const updatedNotes = await loadPageNotes(currentKey)
+      setPageNotes(updatedNotes)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : "删除笔记失败")
+    } finally {
+      setDeletingNoteId(null)
+    }
+  }, [])
+
+  const injectPageNotes = useCallback(
+    (messages: Message[], mode: NotesMode): Message[] => {
+      if (pageNotes.length === 0) {
+        return messages
+      }
+
+      const recentNotes = pageNotes.slice(0, 5)
+      const notesContext = buildPageNotesContext(recentNotes, mode)
+      if (!notesContext) {
+        return messages
+      }
+
+      const notesMessage: Message = {
+        id: generateId(),
+        role: "system",
+        content: notesContext,
+        timestamp: Date.now(),
+        visible: false,
+      }
+
+      const firstUserOrAssistantIndex = messages.findIndex(
+        (m) => m.role === "user" || m.role === "assistant"
+      )
+
+      if (firstUserOrAssistantIndex === -1) {
+        return [...messages, notesMessage]
+      }
+
+      return [
+        ...messages.slice(0, firstUserOrAssistantIndex),
+        notesMessage,
+        ...messages.slice(firstUserOrAssistantIndex),
+      ]
+    },
+    [pageNotes]
+  )
+
   const initializeForPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -1069,6 +1214,9 @@ suggestedPath 使用文档标题。`
 
       const loadedStatus = await loadUnderstandingStatus(key)
       setUnderstandingStatus(loadedStatus)
+
+      const loadedNotes = await loadPageNotes(key)
+      setPageNotes(loadedNotes)
     } catch (error) {
       console.error("Failed to initialize page:", error)
     }
@@ -1337,10 +1485,11 @@ suggestedPath 使用文档标题。`
 
       streamAccumulatedRef.current = ""
 
-      const messagesForLLM = injectLearningStatus(
+      let messagesForLLM = injectLearningStatus(
         [initialMessage, firstUserMessage],
         "conversation"
       )
+      messagesForLLM = injectPageNotes(messagesForLLM, "conversation")
 
       try {
         const rawText = await callLLMStream(
@@ -1501,10 +1650,12 @@ suggestedPath 使用文档标题。`
         roundForLLM = compressed
       }
       let messagesForLLM = buildCompressedMessages(roundForLLM)
+      const notesMode = shouldComplete ? "summary" : "conversation"
       messagesForLLM = injectLearningStatus(
         messagesForLLM,
-        shouldComplete ? "summary" : "conversation"
+        notesMode
       )
+      messagesForLLM = injectPageNotes(messagesForLLM, notesMode)
 
       const rawText = await callLLMStream(
         config,
@@ -1841,6 +1992,23 @@ suggestedPath 使用文档标题。`
           </div>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0 overflow-x-auto">
+          {pageKey && (
+            <button
+              onClick={handleNotesButtonClick}
+              disabled={isSavingNote || streamState.isStreaming}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-30 ${showNotesPanel ? "text-notion-accent bg-notion-accent/10" : "text-notion-text-secondary hover:bg-notion-hover"}`}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <span>批注</span>
+              {pageNotes.length > 0 && (
+                <span className="bg-notion-accent text-white text-[10px] px-1.5 py-0.5 rounded-full min-w-[16px] text-center">
+                  {pageNotes.length}
+                </span>
+              )}
+            </button>
+          )}
           {conversationStarted && !isViewingHistory && (
             <button
               onClick={handleKnowledgeButtonClick}
@@ -1980,6 +2148,136 @@ suggestedPath 使用文档标题。`
               isExporting={isExportingAll}
             />
           )}
+        </div>
+      ) : showNotesPanel ? (
+        <div className="flex flex-col h-full">
+          <div className="sticky top-0 z-10 bg-notion-bg border-b border-notion-border">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowNotesPanel(false)}
+                  className="text-notion-text-secondary hover:text-notion-text transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <h2 className="text-sm font-bold">网页批注</h2>
+                {pageNotes.length > 0 && (
+                  <span className="text-[10px] text-notion-text-secondary bg-notion-hover px-1.5 py-0.5 rounded">
+                    {pageNotes.length} 条
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            <div className="p-4 border-b border-notion-border">
+              <h3 className="text-xs font-medium text-notion-text-secondary mb-3">添加新批注</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-notion-text-secondary mb-1 block">选中文本</label>
+                  <div className="relative">
+                    <textarea
+                      value={newNoteSelectedText}
+                      onChange={(e) => setNewNoteSelectedText(e.target.value)}
+                      placeholder="请在网页中选中文本，或在此粘贴..."
+                      className="w-full px-3 py-2 bg-notion-hover border border-notion-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-notion-accent/30 min-h-[80px]"
+                    />
+                    {!newNoteSelectedText && (
+                      <button
+                        onClick={async () => {
+                          const selectedText = await getSelectedTextFromPage()
+                          if (selectedText) {
+                            setNewNoteSelectedText(selectedText)
+                          } else {
+                            setErrorMessage("未检测到网页中的选中文本，请先在网页中选中要批注的内容")
+                          }
+                        }}
+                        className="absolute bottom-2 right-2 text-xs text-notion-accent hover:text-notion-accent-hover font-medium"
+                      >
+                        从网页获取
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-notion-text-secondary mb-1 block">备注（可选）</label>
+                  <textarea
+                    value={newNoteText}
+                    onChange={(e) => setNewNoteText(e.target.value)}
+                    placeholder="添加你的思考、疑问或备注..."
+                    className="w-full px-3 py-2 bg-notion-hover border border-notion-border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-notion-accent/30 min-h-[60px]"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveNote}
+                  disabled={isSavingNote || !newNoteSelectedText.trim()}
+                  className="w-full px-4 py-2 bg-notion-accent text-white rounded-lg text-sm font-medium shadow-lg shadow-notion-accent/20 hover:bg-notion-accent-hover transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-notion-accent"
+                >
+                  {isSavingNote ? "保存中..." : "保存批注"}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4">
+              <h3 className="text-xs font-medium text-notion-text-secondary mb-3">已有批注</h3>
+              {pageNotes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                  <svg className="w-12 h-12 text-notion-border mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                  <p className="text-sm text-notion-text-secondary">暂无批注</p>
+                  <p className="text-xs text-notion-text-secondary mt-1 opacity-60">在网页中选中文本，然后点击"从网页获取"来添加批注</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pageNotes.map((note) => (
+                    <div
+                      key={note.id}
+                      className="p-3 bg-notion-hover border border-notion-border rounded-lg"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-notion-text-secondary mb-1">选中文本</p>
+                          <p className="text-sm text-notion-text mb-2 whitespace-pre-wrap break-words">
+                            "{note.selectedText}"
+                          </p>
+                          {note.note && (
+                            <>
+                              <p className="text-xs text-notion-text-secondary mb-1">备注</p>
+                              <p className="text-sm text-notion-accent whitespace-pre-wrap break-words">
+                                {note.note}
+                              </p>
+                            </>
+                          )}
+                          <p className="text-[10px] text-notion-text-secondary mt-2">
+                            {formatTime(note.createdAt)}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteNote(note.id)}
+                          disabled={deletingNoteId === note.id}
+                          className="text-notion-text-secondary hover:text-red-500 transition-colors p-1 disabled:opacity-50"
+                        >
+                          {deletingNoteId === note.id ? (
+                            <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       ) : showHistoryPanel ? (
         <div className="flex flex-col h-full">

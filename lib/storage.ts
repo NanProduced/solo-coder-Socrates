@@ -1,11 +1,12 @@
 import { Storage } from "@plasmohq/storage"
-import { ConversationRound, UnderstandingStatus, KnowledgeDocument } from "./types"
+import { ConversationRound, UnderstandingStatus, KnowledgeDocument, PageNote } from "./types"
 
 const storage = new Storage({ area: "local" })
 
 const CONVERSATION_KEY_PREFIX = "page-conversations:"
 const UNDERSTANDING_STATUS_KEY_PREFIX = "understanding-status:"
 const KNOWLEDGE_DOC_KEY_PREFIX = "knowledge-doc:"
+const PAGE_NOTES_KEY_PREFIX = "page-notes:"
 
 export function getPageConversationsKey(pageKey: string): string {
   return CONVERSATION_KEY_PREFIX + pageKey
@@ -177,4 +178,45 @@ export async function loadAllKnowledgeDocuments(): Promise<KnowledgeDocument[]> 
 
   docs.sort((a, b) => b.updatedAt - a.updatedAt)
   return docs
+}
+
+export function getPageNotesKey(pageKey: string): string {
+  return PAGE_NOTES_KEY_PREFIX + pageKey
+}
+
+export async function loadPageNotes(pageKey: string): Promise<PageNote[]> {
+  const key = getPageNotesKey(pageKey)
+  const data = await storage.get<PageNote[]>(key)
+  if (Array.isArray(data)) {
+    return data.sort((a, b) => b.createdAt - a.createdAt)
+  }
+  return []
+}
+
+export async function savePageNote(pageKey: string, note: PageNote): Promise<void> {
+  const key = getPageNotesKey(pageKey)
+  const existingNotes = await loadPageNotes(pageKey)
+  const index = existingNotes.findIndex((n) => n.id === note.id)
+  if (index >= 0) {
+    existingNotes[index] = note
+  } else {
+    existingNotes.push(note)
+  }
+  await storage.set(key, existingNotes)
+}
+
+export async function deletePageNote(pageKey: string, noteId: string): Promise<void> {
+  const key = getPageNotesKey(pageKey)
+  const existingNotes = await loadPageNotes(pageKey)
+  const filteredNotes = existingNotes.filter((n) => n.id !== noteId)
+  if (filteredNotes.length === 0) {
+    await chrome.storage.local.remove(key)
+  } else {
+    await storage.set(key, filteredNotes)
+  }
+}
+
+export async function deletePageNotes(pageKey: string): Promise<void> {
+  const key = getPageNotesKey(pageKey)
+  await chrome.storage.local.remove(key)
 }

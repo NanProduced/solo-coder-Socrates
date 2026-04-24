@@ -139,6 +139,16 @@ export interface CrossDocAnalysis {
   summary: string
 }
 
+export interface PageNote {
+  id: string
+  pageKey: string
+  selectedText: string
+  note?: string
+  pageTitle: string
+  pageUrl: string
+  createdAt: number
+}
+
 export function isSummaryRequest(content: string): boolean {
   const lower = content.toLowerCase().trim()
   if (SUMMARY_KEYWORDS.some((kw) => lower.includes(kw))) return true
