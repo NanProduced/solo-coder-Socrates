@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
-import { KnowledgeDocument, KeyConcept } from "../lib/types"
+import { KnowledgeDocument } from "../lib/types"
 import { loadAllKnowledgeDocuments, loadKnowledgeDocument, loadPageConversations } from "../lib/storage"
 
 const LEARNING_STAGES = ["初步接触", "建立框架", "深入理解", "融会贯通"] as const
@@ -90,8 +90,7 @@ export const KnowledgeLibrary = ({
   const [selectedStage, setSelectedStage] = useState<LearningStage | "全部">("全部")
   const [showConceptsPanel, setShowConceptsPanel] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [analysisResult, setAnalysisResult] = useState<string | null>(null)
+  const [expandedConceptKey, setExpandedConceptKey] = useState<string | null>(null)
 
   const loadDocuments = useCallback(async () => {
     setIsLoading(true)
@@ -168,6 +167,26 @@ export const KnowledgeLibrary = ({
       .filter((c) => c.documents.length >= 2)
       .sort((a, b) => b.documents.length - a.documents.length)
   }, [documents])
+
+  const getRelatedDocTitles = useCallback(
+    (docPageKey: string, docCommonConcepts: ConceptAssociation[]): string[] => {
+      const relatedDocSet = new Set<string>()
+      const relatedPageKeys = new Set<string>()
+
+      docCommonConcepts.forEach((concept) => {
+        concept.documents.forEach((relatedDoc) => {
+          if (relatedDoc.pageKey !== docPageKey && !relatedPageKeys.has(relatedDoc.pageKey)) {
+            relatedPageKeys.add(relatedDoc.pageKey)
+            const title = relatedDoc.pageTitle || "未命名文档"
+            relatedDocSet.add(title)
+          }
+        })
+      })
+
+      return Array.from(relatedDocSet).slice(0, 2)
+    },
+    []
+  )
 
   const filteredDocuments = useMemo(() => {
     return documents.filter((doc) => {
@@ -301,20 +320,6 @@ export const KnowledgeLibrary = ({
     }
   }, [documents, commonConcepts])
 
-  const handleAnalyzeCrossDocument = useCallback(async () => {
-    setIsAnalyzing(true)
-    setAnalysisResult(null)
-    try {
-      setAnalysisResult(
-        "跨文档 LLM 分析功能已预留。\n\n此接口将用于：\n- 生成文档间的相关关系\n- 推荐学习路径\n- 提供跨文档知识关联的推荐理由\n\n实现方式：将所有文档的摘要、关键概念和知识卡片作为上下文，调用 LLM 进行综合分析。"
-      )
-    } catch (error) {
-      console.error("Analysis failed:", error)
-    } finally {
-      setIsAnalyzing(false)
-    }
-  }, [])
-
   const handleViewDocumentByPageKey = useCallback(
     async (pageKey: string) => {
       const doc = await loadKnowledgeDocument(pageKey)
@@ -324,6 +329,11 @@ export const KnowledgeLibrary = ({
     },
     [onViewDocument]
   )
+
+  const toggleConceptExpand = (conceptKey: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setExpandedConceptKey(expandedConceptKey === conceptKey ? null : conceptKey)
+  }
 
   if (isLoading) {
     return (
@@ -478,21 +488,65 @@ export const KnowledgeLibrary = ({
             <h3 className="text-xs font-semibold text-notion-text-secondary uppercase tracking-wider mb-2">
               跨文档共同概念 ({commonConcepts.length})
             </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {commonConcepts.slice(0, 20).map((c) => (
-                <span
-                  key={c.concept}
-                  className="inline-flex items-center gap-1 px-2 py-1 bg-notion-accent/10 text-notion-accent rounded-full text-xs cursor-pointer hover:bg-notion-accent/20 transition-colors group"
-                  title={`${c.description || ""}\n出现在 ${c.documents.length} 篇文档中`}
-                >
-                  <span className="font-medium">{c.concept}</span>
-                  <span className="text-[9px] opacity-60">×{c.documents.length}</span>
-                </span>
-              ))}
+            <div className="flex flex-col gap-1.5">
+              {commonConcepts.slice(0, 20).map((c) => {
+                const normalizedKey = normalizeConcept(c.concept)
+                const isExpanded = expandedConceptKey === normalizedKey
+                return (
+                  <div key={normalizedKey} className="flex flex-col">
+                    <div
+                      className="flex items-center justify-between px-2 py-1.5 bg-notion-accent/10 text-notion-accent rounded-lg text-xs cursor-pointer hover:bg-notion-accent/20 transition-colors group"
+                      onClick={(e) => toggleConceptExpand(normalizedKey, e)}
+                      title={`${c.description || ""}\n出现在 ${c.documents.length} 篇文档中`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <svg
+                          className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        <span className="font-medium">{c.concept}</span>
+                        <span className="text-[9px] opacity-60">×{c.documents.length}</span>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="mt-1.5 ml-4 pl-3 border-l-2 border-notion-accent/30">
+                        <p className="text-[10px] text-notion-text-secondary font-medium mb-1.5">关联文档：</p>
+                        <div className="flex flex-col gap-1">
+                          {c.documents.map((doc, idx) => {
+                            const truncatedTitle = doc.pageTitle?.length > 40
+                              ? doc.pageTitle.slice(0, 40) + "..."
+                              : doc.pageTitle || "未命名文档"
+                            return (
+                              <div
+                                key={`${doc.pageKey}-${idx}`}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] text-notion-text-secondary hover:bg-notion-bg-secondary cursor-pointer transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleViewDocumentByPageKey(doc.pageKey)
+                                }}
+                              >
+                                <svg className="w-3 h-3 text-notion-text-secondary/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
+                                </svg>
+                                <span className="truncate">{truncatedTitle}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
               {commonConcepts.length > 20 && (
-                <span className="text-xs text-notion-text-secondary opacity-60">
-                  +{commonConcepts.length - 20} 更多
-                </span>
+                <p className="text-xs text-notion-text-secondary opacity-60 text-center py-1">
+                  +{commonConcepts.length - 20} 更多共同概念
+                </p>
               )}
             </div>
           </div>
@@ -548,6 +602,7 @@ export const KnowledgeLibrary = ({
               const docCommonConcepts = commonConcepts.filter((c) =>
                 c.documents.some((d) => d.pageKey === doc.pageKey)
               )
+              const relatedDocTitles = getRelatedDocTitles(doc.pageKey, docCommonConcepts)
 
               return (
                 <div
@@ -615,19 +670,36 @@ export const KnowledgeLibrary = ({
                           </span>
                         )}
 
-                        {docCommonConcepts.length > 0 && (
-                          <span className="text-[9px] text-notion-accent">
-                            🔗{docCommonConcepts.length} 关联
-                          </span>
-                        )}
-
                         <span className="text-[9px] text-notion-text-secondary/40 ml-auto">
                           {formatTime(doc.updatedAt)}
                         </span>
                       </div>
 
+                      {docCommonConcepts.length > 0 && (
+                        <div className="mt-2.5">
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            <span className="text-[9px] text-notion-accent">
+                              🔗{docCommonConcepts.length} 关联
+                            </span>
+                            {relatedDocTitles.length > 0 && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-[9px] text-notion-text-secondary/40">→</span>
+                                {relatedDocTitles.map((title, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="text-[9px] text-notion-text-secondary/70 bg-notion-bg-secondary/80 px-1.5 py-0.5 rounded"
+                                  >
+                                    {title.length > 15 ? title.slice(0, 15) + "..." : title}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {doc.keyConcepts.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2.5">
+                        <div className="flex flex-wrap gap-1 mt-2">
                           {doc.keyConcepts.slice(0, 5).map((concept, idx) => (
                             <span
                               key={idx}
@@ -651,55 +723,6 @@ export const KnowledgeLibrary = ({
           </div>
         )}
       </div>
-
-      {documents.length >= 2 && (
-        <div className="sticky bottom-0 border-t border-notion-border bg-notion-bg/95 backdrop-blur-md">
-          <div className="px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[11px] text-notion-text-secondary font-medium">跨文档分析</p>
-                <p className="text-[10px] text-notion-text-secondary/60">
-                  预留接口：生成相关关系、学习路径、推荐理由
-                </p>
-              </div>
-              <button
-                onClick={handleAnalyzeCrossDocument}
-                disabled={isAnalyzing}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-notion-accent/10 text-notion-accent rounded-lg text-xs font-medium hover:bg-notion-accent/20 transition-colors disabled:opacity-50"
-              >
-                {isAnalyzing ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                    />
-                  </svg>
-                )}
-                <span>{isAnalyzing ? "分析中..." : "智能分析"}</span>
-              </button>
-            </div>
-
-            {analysisResult && (
-              <div className="mt-3 p-3 bg-notion-bg-secondary/50 rounded-lg border border-notion-border/30">
-                <pre className="text-xs text-notion-text-secondary whitespace-pre-wrap leading-relaxed">
-                  {analysisResult}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
