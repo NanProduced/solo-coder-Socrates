@@ -170,3 +170,40 @@ export interface CrossDocumentAnalysisState {
   documentCount: number
   truncated: boolean
 }
+
+export interface AnalysisFilterConditions {
+  searchQuery: string
+  selectedStage: string
+  documentPageKeys: string[]
+  documentCount: number
+}
+
+export interface ValidatedDocumentRelation {
+  sourcePageKey: string
+  targetPageKey: string
+  relationType: "prerequisite" | "complementary" | "extension" | "alternative"
+  description: string
+  strength: number
+}
+
+export interface ValidatedConceptRelation {
+  concept: string
+  relationType: "common" | "complementary" | "dependent" | "conflicting"
+  appearingDocuments: string[]
+  description: string
+}
+
+export interface ValidatedLearningPathStep {
+  pageKey: string
+  reason: string
+  estimatedDifficulty: "beginner" | "intermediate" | "advanced"
+  prerequisites: string[]
+}
+
+export interface ValidatedCrossDocumentAnalysis {
+  documentRelations: ValidatedDocumentRelation[]
+  conceptRelations: ValidatedConceptRelation[]
+  recommendedLearningPath: ValidatedLearningPathStep[]
+  overallRecommendation: string
+  keyInsights: string[]
+}

@@ -181,6 +181,200 @@ const buildAnalysisInput = (docs: KnowledgeDocument[]): { input: string; truncat
   }
 }
 
+const VALID_RELATION_TYPES = new Set(["prerequisite", "complementary", "extension", "alternative"])
+const VALID_CONCEPT_RELATION_TYPES = new Set(["common", "complementary", "dependent", "conflicting"])
+const VALID_DIFFICULTIES = new Set(["beginner", "intermediate", "advanced"])
+
+const isValidString = (value: unknown): value is string => {
+  return typeof value === "string" && value.trim().length > 0
+}
+
+const isValidNumber = (value: unknown): value is number => {
+  return typeof value === "number" && !Number.isNaN(value)
+}
+
+const isValidArray = (value: unknown): value is unknown[] => {
+  return Array.isArray(value)
+}
+
+const validateDocumentRelation = (item: unknown, validPageKeys: Set<string>): DocumentRelation | null => {
+  if (!item || typeof item !== "object") return null
+
+  const obj = item as Record<string, unknown>
+
+  const sourcePageKey = isValidString(obj.sourcePageKey) ? obj.sourcePageKey : ""
+  const targetPageKey = isValidString(obj.targetPageKey) ? obj.targetPageKey : ""
+
+  if (!sourcePageKey || !targetPageKey) return null
+  if (sourcePageKey === targetPageKey) return null
+
+  let relationType: "prerequisite" | "complementary" | "extension" | "alternative" = "complementary"
+  if (isValidString(obj.relationType) && VALID_RELATION_TYPES.has(obj.relationType)) {
+    relationType = obj.relationType as typeof relationType
+  }
+
+  const description = isValidString(obj.description) ? obj.description : ""
+  const strength = isValidNumber(obj.strength) ? Math.max(0, Math.min(1, obj.strength)) : 0.5
+
+  if (!validPageKeys.has(sourcePageKey) || !validPageKeys.has(targetPageKey)) {
+    return null
+  }
+
+  return {
+    sourcePageKey,
+    targetPageKey,
+    relationType,
+    description,
+    strength,
+  }
+}
+
+const validateConceptRelation = (item: unknown, validPageKeys: Set<string>): ConceptRelation | null => {
+  if (!item || typeof item !== "object") return null
+
+  const obj = item as Record<string, unknown>
+
+  const concept = isValidString(obj.concept) ? obj.concept.trim() : ""
+  if (!concept) return null
+
+  let relationType: "common" | "complementary" | "dependent" | "conflicting" = "common"
+  if (isValidString(obj.relationType) && VALID_CONCEPT_RELATION_TYPES.has(obj.relationType)) {
+    relationType = obj.relationType as typeof relationType
+  }
+
+  const description = isValidString(obj.description) ? obj.description : ""
+
+  let appearingDocuments: string[] = []
+  if (isValidArray(obj.appearingDocuments)) {
+    appearingDocuments = obj.appearingDocuments
+      .filter(isValidString)
+      .filter((pk) => validPageKeys.has(pk))
+  }
+
+  if (appearingDocuments.length < 2) return null
+
+  return {
+    concept,
+    relationType,
+    appearingDocuments,
+    description,
+  }
+}
+
+const validateLearningPathStep = (item: unknown, validPageKeys: Set<string>): LearningPathStep | null => {
+  if (!item || typeof item !== "object") return null
+
+  const obj = item as Record<string, unknown>
+
+  const pageKey = isValidString(obj.pageKey) ? obj.pageKey : ""
+  if (!pageKey || !validPageKeys.has(pageKey)) return null
+
+  const reason = isValidString(obj.reason) ? obj.reason : ""
+
+  let estimatedDifficulty: "beginner" | "intermediate" | "advanced" = "intermediate"
+  if (isValidString(obj.estimatedDifficulty) && VALID_DIFFICULTIES.has(obj.estimatedDifficulty)) {
+    estimatedDifficulty = obj.estimatedDifficulty as typeof estimatedDifficulty
+  }
+
+  let prerequisites: string[] = []
+  if (isValidArray(obj.prerequisites)) {
+    prerequisites = obj.prerequisites
+      .filter(isValidString)
+      .filter((pk) => validPageKeys.has(pk) && pk !== pageKey)
+  }
+
+  return {
+    pageKey,
+    reason,
+    estimatedDifficulty,
+    prerequisites,
+  }
+}
+
+interface ValidateAnalysisResult {
+  documentRelations: DocumentRelation[]
+  conceptRelations: ConceptRelation[]
+  recommendedLearningPath: LearningPathStep[]
+  overallRecommendation: string
+  keyInsights: string[]
+}
+
+const validateAnalysisResult = (
+  parsed: unknown,
+  validPageKeys: Set<string>
+): ValidateAnalysisResult => {
+  const defaultResult: ValidateAnalysisResult = {
+    documentRelations: [],
+    conceptRelations: [],
+    recommendedLearningPath: [],
+    overallRecommendation: "暂无整体建议",
+    keyInsights: [],
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return defaultResult
+  }
+
+  const obj = parsed as Record<string, unknown>
+
+  let documentRelations: DocumentRelation[] = []
+  if (isValidArray(obj.documentRelations)) {
+    documentRelations = obj.documentRelations
+      .map((item) => validateDocumentRelation(item, validPageKeys))
+      .filter((item): item is DocumentRelation => item !== null)
+  }
+
+  let conceptRelations: ConceptRelation[] = []
+  if (isValidArray(obj.conceptRelations)) {
+    conceptRelations = obj.conceptRelations
+      .map((item) => validateConceptRelation(item, validPageKeys))
+      .filter((item): item is ConceptRelation => item !== null)
+  }
+
+  let recommendedLearningPath: LearningPathStep[] = []
+  if (isValidArray(obj.recommendedLearningPath)) {
+    const seenPageKeys = new Set<string>()
+    recommendedLearningPath = obj.recommendedLearningPath
+      .map((item) => validateLearningPathStep(item, validPageKeys))
+      .filter((item): item is LearningPathStep => item !== null)
+      .filter((item) => {
+        if (seenPageKeys.has(item.pageKey)) return false
+        seenPageKeys.add(item.pageKey)
+        return true
+      })
+  }
+
+  const overallRecommendation = isValidString(obj.overallRecommendation)
+    ? obj.overallRecommendation
+    : defaultResult.overallRecommendation
+
+  let keyInsights: string[] = []
+  if (isValidArray(obj.keyInsights)) {
+    keyInsights = obj.keyInsights.filter(isValidString)
+  }
+
+  return {
+    documentRelations,
+    conceptRelations,
+    recommendedLearningPath,
+    overallRecommendation,
+    keyInsights,
+  }
+}
+
+const areFilterConditionsEqual = (
+  a: { searchQuery: string; selectedStage: string; documentPageKeys: string[] } | null,
+  b: { searchQuery: string; selectedStage: string; documentPageKeys: string[] }
+): boolean => {
+  if (!a) return false
+  if (a.searchQuery !== b.searchQuery) return false
+  if (a.selectedStage !== b.selectedStage) return false
+  if (a.documentPageKeys.length !== b.documentPageKeys.length) return false
+  const sortedA = [...a.documentPageKeys].sort()
+  const sortedB = [...b.documentPageKeys].sort()
+  return sortedA.every((key, idx) => key === sortedB[idx])
+}
+
 const LEARNING_STAGES = ["初步接触", "建立框架", "深入理解", "融会贯通"] as const
 type LearningStage = (typeof LEARNING_STAGES)[number]
 
@@ -277,6 +471,12 @@ export const KnowledgeLibrary = ({
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [truncatedCount, setTruncatedCount] = useState(0)
   const [showAnalysisPanel, setShowAnalysisPanel] = useState(false)
+  const [analysisFilterConditions, setAnalysisFilterConditions] = useState<{
+    searchQuery: string
+    selectedStage: string
+    documentPageKeys: string[]
+    documentCount: number
+  } | null>(null)
 
   const getDocTitleByPageKey = useCallback(
     (pageKey: string): string => {
@@ -480,6 +680,18 @@ export const KnowledgeLibrary = ({
     })
   }, [documents, searchQuery, selectedStage])
 
+  const currentFilterConditions = useMemo(() => ({
+    searchQuery,
+    selectedStage,
+    documentPageKeys: filteredDocuments.map((d) => d.pageKey),
+    documentCount: filteredDocuments.length,
+  }), [searchQuery, selectedStage, filteredDocuments])
+
+  const isAnalysisResultStale = useMemo(() => {
+    if (!analysisResult) return false
+    return !areFilterConditionsEqual(analysisFilterConditions, currentFilterConditions)
+  }, [analysisResult, analysisFilterConditions, currentFilterConditions])
+
   const analyzeCrossDocument = useCallback(async () => {
     if (!config.apiKey || !config.baseURL) {
       setAnalysisError("请先在设置中配置 API 参数")
@@ -491,9 +703,17 @@ export const KnowledgeLibrary = ({
       return
     }
 
+    const validPageKeys = new Set(filteredDocuments.map((d) => d.pageKey))
+
     setIsAnalyzing(true)
     setAnalysisError(null)
     setShowAnalysisPanel(true)
+    setAnalysisFilterConditions({
+      searchQuery,
+      selectedStage,
+      documentPageKeys: filteredDocuments.map((d) => d.pageKey),
+      documentCount: filteredDocuments.length,
+    })
 
     try {
       const { input, truncated, count } = buildAnalysisInput(filteredDocuments)
@@ -520,31 +740,35 @@ export const KnowledgeLibrary = ({
         6000
       )
 
-      const parsed = parseLLMJson(result)
+      let parsed: unknown
+      try {
+        parsed = parseLLMJson(result)
+      } catch {
+        setAnalysisError("解析结果失败，返回格式不正确")
+        return
+      }
+
+      const validated = validateAnalysisResult(parsed, validPageKeys)
 
       const analysis: CrossDocumentAnalysis = {
-        documentRelations: Array.isArray(parsed.documentRelations) ? parsed.documentRelations : [],
-        conceptRelations: Array.isArray(parsed.conceptRelations) ? parsed.conceptRelations : [],
-        recommendedLearningPath: Array.isArray(parsed.recommendedLearningPath)
-          ? parsed.recommendedLearningPath
-          : [],
-        overallRecommendation: parsed.overallRecommendation || "暂无整体建议",
-        keyInsights: Array.isArray(parsed.keyInsights) ? parsed.keyInsights : [],
+        documentRelations: validated.documentRelations,
+        conceptRelations: validated.conceptRelations,
+        recommendedLearningPath: validated.recommendedLearningPath,
+        overallRecommendation: validated.overallRecommendation,
+        keyInsights: validated.keyInsights,
       }
 
       setAnalysisResult(analysis)
     } catch (error) {
       if (error instanceof LLMError) {
         setAnalysisError(`分析失败: ${error.message}`)
-      } else if (error instanceof SyntaxError) {
-        setAnalysisError("解析结果失败，返回格式不正确")
       } else {
         setAnalysisError("分析过程中发生未知错误")
       }
     } finally {
       setIsAnalyzing(false)
     }
-  }, [config, filteredDocuments])
+  }, [config, filteredDocuments, searchQuery, selectedStage])
 
   const handleExportAll = useCallback(async () => {
     if (documents.length === 0) return
@@ -977,6 +1201,23 @@ export const KnowledgeLibrary = ({
 
             {!isAnalyzing && !analysisError && analysisResult && (
               <div className="flex flex-col gap-4">
+                {isAnalysisResultStale && (
+                  <div className="flex items-center justify-between p-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <span className="text-amber-500">⚠️</span>
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        筛选条件已变化，当前分析结果可能已过期
+                      </p>
+                    </div>
+                    <button
+                      onClick={analyzeCrossDocument}
+                      className="text-xs px-2 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 transition-colors"
+                    >
+                      重新分析
+                    </button>
+                  </div>
+                )}
+
                 {analysisResult.keyInsights.length > 0 && (
                   <div>
                     <h4 className="text-[11px] font-medium text-notion-text mb-2 flex items-center gap-1">
